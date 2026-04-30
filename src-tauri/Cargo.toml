@@ -1,0 +1,89 @@
+[package]
+name = "pylon"
+version = "0.1.0"
+edition = "2021"
+authors = ["TheHolyOneZ"]
+license = "GPL-3.0"
+description = "Pylon — Remote Infrastructure Command Center"
+
+[lib]
+name = "pylon_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "pylon"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+
+# SSH / SFTP
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+# Force vendored OpenSSL for all platforms — required for macOS cross-compilation
+openssl = { version = "0.10", features = ["vendored"] }
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# AES-256-GCM encryption (AEAD — authenticated encryption)
+aes-gcm = "0.10"
+# Key derivation
+argon2 = "0.5"
+# Random bytes
+rand = "0.8"
+# File system watcher (Pylon-Sync)
+notify = "6"
+# Metadata stripping
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+exif = { package = "kamadak-exif", version = "0.5" }
+lopdf = "0.32"
+# Parallel transfers
+rayon = "1"
+# Error handling
+anyhow = "1"
+thiserror = "1"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# UUID for session IDs
+uuid = { version = "1", features = ["v4"] }
+# Base64 for key material
+base64 = "0.22"
+# Hex encoding
+hex = "0.4"
+# Platform dirs (config, data)
+dirs = "5"
+# SHA-256 checksums for transfer verification
+sha2 = "0.10"
+# Office format metadata stripping (DOCX/XLSX/PPTX are ZIP containers)
+zip = "0.6"
+# MP3/FLAC ID3 tag stripping
+id3 = "1"
+# .gitignore/.syncignore pattern matching for Pylon-Sync
+ignore = "0.4"
+# Streaming I/O utilities
+tokio-util = { version = "0.7", features = ["io"] }
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+# Path handling
+dunce = "1"
+# Progress channels
+flume = "0.11"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
