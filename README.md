@@ -8,6 +8,16 @@ Cross-platform SSH and SFTP desktop client built with [Tauri v2](https://tauri.a
 
 ---
 
+## Download
+
+### **[→ zsync.eu/pylon](https://zsync.eu/pylon/)**
+
+Windows, macOS (Apple Silicon + Intel), and Linux — all builds available on the website. No account required. Free and open source under GPL-3.0.
+
+> **macOS:** Not yet notarized. Right-click the `.app` → Open → confirm in the security dialog on first launch.
+
+---
+
 ## Screenshots
 
 | Files | Terminal |
