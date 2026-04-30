@@ -10,15 +10,15 @@ use crate::error::{PylonError, PylonResult};
 
 #[derive(Debug, Clone)]
 pub enum HostKeyStatus {
-    /// Host key matches a known entry.
+
     Known,
-    /// Host is new — fingerprint provided for user to review.
+
     Unknown { fingerprint: String, key_type: String },
-    /// Host key changed — possible MITM. Previous and current fingerprints provided.
+
     Changed { old_fingerprint: String, new_fingerprint: String, key_type: String },
 }
 
-/// Compute the SHA-256 fingerprint of a raw host key (display format: SHA256:base64).
+
 pub fn sha256_fingerprint(key_bytes: &[u8]) -> String {
     let digest = Sha256::digest(key_bytes);
     let b64 = B64.encode(digest);
@@ -30,7 +30,7 @@ pub fn known_hosts_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"))
 }
 
-/// Check a host key against known_hosts.
+
 pub fn check_host_key(
     host: &str,
     port: u16,
@@ -111,7 +111,7 @@ pub fn check_host_key(
     })
 }
 
-/// Append a new host key to known_hosts.
+
 pub fn add_host_key(
     host: &str,
     port: u16,

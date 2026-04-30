@@ -215,7 +215,7 @@ fn resume_suspended_watchers(
     }
 }
 
-/// Connect using a stored vault credential — password/key never leaves Rust.
+
 #[tauri::command]
 pub async fn vault_connect(
     app: tauri::AppHandle,

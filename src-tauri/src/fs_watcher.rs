@@ -55,27 +55,22 @@ pub struct SyncConfig {
     pub expected_fingerprint: String,
 
 
-    /// Gitignore-style globs relative to remote_root.  Any remote path
-    /// matching a protected pattern is completely skipped for all operations
-    /// (upload, overwrite, delete).
     #[serde(default)]
     pub protected_patterns: Vec<String>,
 
-    /// When true, log what would happen but never transfer or delete anything.
+
     #[serde(default)]
     pub dry_run: bool,
 
-    /// Skip files larger than this many kilobytes during sync.  None = no limit.
+
     #[serde(default)]
     pub max_file_size_kb: Option<u64>,
 
-    /// When false (the default), never delete remote files even if the local
-    /// file was removed.  When true, deletions are propagated to the remote.
+
     #[serde(default)]
     pub sync_deletes: bool,
 
-    /// After the first full flush of pending changes the watcher automatically
-    /// stops and marks itself as done.
+
     #[serde(default)]
     pub initial_sync_only: bool,
 }
@@ -131,9 +126,7 @@ impl WatcherRegistry {
         }
     }
 
-    /// Stop watchers whose session just disconnected.
-    /// Returns configs of fully-stopped watchers (keep_on_disconnect = false).
-    /// Watchers with keep_on_disconnect = true are only paused, not removed.
+
     pub fn on_session_removed(&self, session_id: &str) -> Vec<SyncConfig> {
         let mut entries = self.entries.lock().unwrap();
         let mut flags = self.pause_flags.lock().unwrap();
@@ -703,9 +696,7 @@ fn is_ignored(path: &Path, matcher: &IgnoreMatcher) -> bool {
     }
 }
 
-/// Build a gitignore matcher rooted at `remote_root` for protected patterns.
-/// The matcher is used against full remote absolute paths, so patterns should
-/// be relative to remote_root (e.g. "uploads", "uploads/**").
+
 fn build_protected_matcher(remote_root: &str, patterns: &[String]) -> IgnoreMatcher {
     if patterns.is_empty() { return None; }
     let mut builder = ignore::gitignore::GitignoreBuilder::new(remote_root);
@@ -715,7 +706,7 @@ fn build_protected_matcher(remote_root: &str, patterns: &[String]) -> IgnoreMatc
     builder.build().ok()
 }
 
-/// Return true if the given absolute remote path matches any protected pattern.
+
 fn is_protected(remote_abs: &str, remote_root: &str, matcher: &IgnoreMatcher) -> bool {
     let m = match matcher {
         Some(m) => m,

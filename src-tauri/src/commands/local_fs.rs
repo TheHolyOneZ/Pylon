@@ -116,8 +116,7 @@ pub async fn open_in_file_manager(path: String) -> Result<(), PylonError> {
     Ok(())
 }
 
-/// Returns platform-appropriate starting path: home dir on all platforms.
-/// Falls back to drive root on Windows or "/" on Unix.
+
 #[tauri::command]
 pub async fn get_home_dir() -> Result<String, PylonError> {
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
@@ -136,14 +135,14 @@ pub async fn get_home_dir() -> Result<String, PylonError> {
     }
 }
 
-/// Join a path and a child segment correctly for the current OS.
+
 #[tauri::command]
 pub async fn path_join(parent: String, child: String) -> Result<String, PylonError> {
     let p = std::path::PathBuf::from(&parent).join(&child);
     Ok(p.to_string_lossy().into_owned())
 }
 
-/// Check whether a local path exists (file or directory).
+
 #[tauri::command]
 pub async fn local_path_exists(path: String) -> Result<bool, PylonError> {
     Ok(std::path::Path::new(&path).exists())
@@ -173,7 +172,7 @@ pub async fn delete_local_batch(paths: Vec<String>) -> Result<(), PylonError> {
     Ok(())
 }
 
-/// Returns "windows", "macos", or "linux".
+
 #[tauri::command]
 pub async fn get_platform() -> &'static str {
     #[cfg(target_os = "windows")]  { "windows" }

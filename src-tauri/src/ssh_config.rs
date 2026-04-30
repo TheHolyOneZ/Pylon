@@ -19,7 +19,7 @@ pub fn ssh_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".ssh").join("config"))
 }
 
-/// Parse ~/.ssh/config and return all Host blocks.
+
 pub fn list_ssh_config_hosts() -> Vec<SshConfigHost> {
     let path = match ssh_config_path() {
         Some(p) => p,

@@ -47,10 +47,10 @@ pub enum AuthType {
 #[derive(Serialize, Deserialize)]
 struct VaultFile {
     version: u8,
-    /// Base64-encoded 32-byte random salt, unique per vault.
+
     vault_salt: String,
-    /// Encrypted sentinel — used to verify the passphrase before decrypting entries.
-    /// Plaintext is always b"pylon-vault-sentinel-v2". Added in v2.1.
+
+
     #[serde(default)]
     sentinel: Option<EncryptedBlob>,
     entries: HashMap<String, EncryptedBlob>,
@@ -61,11 +61,11 @@ struct VaultInner {
     credentials: HashMap<String, Credential>,
     session_key: Option<[u8; 32]>,
     vault_path: PathBuf,
-    /// Passphrase cached for persist() calls — cleared on lock().
+
     passphrase_cache: Option<String>,
-    /// The vault's unique salt (loaded from file or generated on first persist).
+
     vault_salt: Option<String>,
-    /// Set to true when a full unlock+load has happened.
+
     loaded: bool,
 }
 
@@ -213,7 +213,7 @@ impl Vault {
         self.persist(passphrase)
     }
 
-    /// Get credential including password/private_key (for internal Rust use only — never sent to JS).
+
     pub fn get_credential_with_secret(&self, id: &str) -> PylonResult<Credential> {
         let inner = self.inner.read().unwrap();
         if inner.session_key.is_none() {
@@ -267,7 +267,7 @@ impl Vault {
         self.persist(passphrase)
     }
 
-    /// Delete the vault file and wipe in-memory state. Creates a fresh vault on next unlock.
+
     pub fn reset(&self) -> PylonResult<()> {
         let mut inner = self.inner.write().unwrap();
         let vault_path = inner.vault_path.clone();

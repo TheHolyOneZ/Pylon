@@ -147,8 +147,7 @@ impl TerminalRegistry {
     }
 }
 
-/// Drives a single terminal: reads output from SSH channel, writes user input from cmd_rx.
-/// Runs entirely in its own thread with its own dedicated SSH session — no shared mutexes.
+
 fn pump_terminal(
     app: AppHandle,
     _sess: Session,

@@ -43,7 +43,7 @@ pub struct ConnectionInfo {
     pub from_vault: bool,
 }
 
-/// Result of host key verification — returned to frontend to handle unknown/changed keys.
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HostKeyVerification {
     pub status: String,
@@ -54,7 +54,7 @@ pub struct HostKeyVerification {
     pub port: u16,
 }
 
-/// Credentials kept in memory so terminals can open a dedicated SSH session.
+
 #[derive(Clone)]
 pub struct TermAuthParams {
     pub host: String,
@@ -67,9 +67,9 @@ pub struct TermAuthParams {
 pub struct LiveSession {
     pub info: ConnectionInfo,
     pub session: Arc<Mutex<Session>>,
-    /// Cancellation token for keep-alive task
+
     pub keepalive_cancel: Arc<std::sync::atomic::AtomicBool>,
-    /// Stored so terminals can open their own dedicated session
+
     pub term_auth: TermAuthParams,
 }
 
@@ -154,18 +154,17 @@ impl SessionRegistry {
     }
 }
 
-/// Result of beginning an SSH connection — may require host key confirmation before auth.
+
 pub enum OpenSessionResult {
-    /// Authentication complete; session ready.
+
     Ready(Session, ConnectionInfo),
-    /// Host key is unknown — frontend must confirm.
+
     NeedsHostKeyConfirmation(HostKeyVerification, Session),
-    /// Host key changed — potential MITM.
+
     HostKeyChanged(HostKeyVerification),
 }
 
-/// Open a raw SSH session, performing host key verification.
-/// Returns `NeedsHostKeyConfirmation` if the host is new; caller must call `accept_host_key` then re-authenticate.
+
 pub fn open_session(
     host: &str,
     port: u16,
@@ -234,7 +233,7 @@ pub fn open_session(
         .map(|(s, info)| OpenSessionResult::Ready(s, info))
 }
 
-/// Complete authentication on a session whose host key has already been verified.
+
 pub fn authenticate_and_build(
     sess: Session,
     host: &str,
@@ -332,7 +331,7 @@ pub fn spawn_keepalive(
     });
 }
 
-/// Open a dedicated SSH session for a parallel worker (host already verified by primary session).
+
 pub fn open_transfer_session(auth: &TermAuthParams) -> PylonResult<Arc<Mutex<Session>>> {
     let addr = format!("{}:{}", auth.host, auth.port);
     let tcp = TcpStream::connect(&addr)

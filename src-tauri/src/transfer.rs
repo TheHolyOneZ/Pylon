@@ -23,8 +23,7 @@ use crate::{
 
 pub const CHUNK_SIZE: usize = 512 * 1024;
 
-/// Enrich an SFTP error message with a human-readable explanation of the
-/// numeric SFTP status code so that users and logs don't see bare "SFTP(N)".
+
 fn sftp_rich_error(op: &str, path: &str, raw: &str) -> String {
 
     let code_hint = if raw.contains("SFTP(2)") {
@@ -277,7 +276,7 @@ fn unique_tmp_path(final_path: &str) -> String {
     }
 }
 
-/// Upload a local file to a remote path with resume, atomic writes, and SHA-256.
+
 pub fn upload(
     app: &AppHandle,
     session: &Arc<Mutex<ssh2::Session>>,
@@ -544,7 +543,7 @@ pub fn upload(
     }
 }
 
-/// Best-effort removal of a remote temp file.  Never panics.
+
 fn cleanup_remote_temp(session: &Arc<Mutex<ssh2::Session>>, tmp_path: &str) {
     if let Ok(sess) = session.lock() {
         if let Ok(sftp) = sess.sftp() {
@@ -553,7 +552,7 @@ fn cleanup_remote_temp(session: &Arc<Mutex<ssh2::Session>>, tmp_path: &str) {
     }
 }
 
-/// Download a remote file to a local path with resume and atomic writes.
+
 pub fn download(
     app: &AppHandle,
     session: &Arc<Mutex<ssh2::Session>>,

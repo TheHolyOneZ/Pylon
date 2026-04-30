@@ -19,19 +19,19 @@ use crate::{
 pub struct VaultProfile {
     pub id: String,
     pub name: String,
-    /// Hex color, e.g. "#00e5ff"
+
     pub color: String,
-    /// Emoji icon, e.g. "🔒"
+
     pub icon: String,
     pub created_at: String,
-    /// Path to this profile's vault file (relative to data_dir)
+
     pub file_name: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct ProfileList {
     profiles: Vec<VaultProfile>,
-    /// Currently selected profile ID (may not be unlocked)
+
     active_id: String,
 }
 
@@ -161,7 +161,7 @@ impl VaultManager {
         Ok(profile)
     }
 
-    /// Delete a profile — works even if locked. Anyone with PC access can do this.
+
     pub fn delete_profile(&self, id: &str) -> PylonResult<()> {
         {
             let profiles = self.profiles.lock().unwrap();

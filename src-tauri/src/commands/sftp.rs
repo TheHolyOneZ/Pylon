@@ -57,7 +57,7 @@ pub async fn delete_remote(
     }
 }
 
-/// Delete multiple paths in parallel — opens up to 4 worker sessions for speed.
+
 #[tauri::command]
 pub async fn delete_batch(
     registry: State<'_, SessionRegistry>,

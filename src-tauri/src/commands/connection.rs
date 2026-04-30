@@ -58,7 +58,7 @@ pub async fn connect(
     }
 }
 
-/// Accept an unknown host key and write it to known_hosts, then complete the connection.
+
 #[tauri::command]
 pub async fn accept_host_key_and_connect(
     app: AppHandle,

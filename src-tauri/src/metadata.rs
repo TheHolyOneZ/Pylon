@@ -24,7 +24,7 @@ pub struct MetadataField {
     pub value: String,
 }
 
-/// Strip metadata from bytes, returning clean bytes.
+
 pub fn strip_bytes(data: &[u8], path: &Path) -> PylonResult<Vec<u8>> {
     let ext = path
         .extension()
@@ -42,7 +42,7 @@ pub fn strip_bytes(data: &[u8], path: &Path) -> PylonResult<Vec<u8>> {
     }
 }
 
-/// Strip and return a report on what was removed.
+
 pub fn strip_bytes_with_report(data: &[u8], path: &Path) -> PylonResult<(Vec<u8>, MetadataReport)> {
     let ext = path
         .extension()
@@ -65,7 +65,7 @@ pub fn strip_bytes_with_report(data: &[u8], path: &Path) -> PylonResult<(Vec<u8>
     Ok((clean, report))
 }
 
-/// Read metadata fields without stripping.
+
 pub fn read_fields(data: &[u8], path: &Path) -> PylonResult<Vec<MetadataField>> {
     let ext = path
         .extension()

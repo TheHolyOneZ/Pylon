@@ -25,7 +25,7 @@ pub struct RemoteEntry {
     pub permissions: Option<u32>,
     pub owner: Option<u32>,
     pub group: Option<u32>,
-    /// Resolved symlink target (only set for symlinks)
+
     pub symlink_target: Option<String>,
 }
 
@@ -122,7 +122,7 @@ pub fn delete_dir(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> 
     sftp.rmdir(Path::new(path)).map_err(|e| PylonError::Sftp(format!("rmdir {path}: {e}")))
 }
 
-/// Recursively delete a directory and all its contents.
+
 pub fn recursive_delete(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> {
     let entries = list_dir(session, path)?;
     for entry in entries {
@@ -141,7 +141,7 @@ pub fn mkdir(session: &Arc<Mutex<Session>>, path: &str, mode: i32) -> PylonResul
     sftp.mkdir(Path::new(path), mode).map_err(|e| PylonError::Sftp(format!("mkdir {path}: {e}")))
 }
 
-/// Create all missing parent directories (like `mkdir -p`).
+
 pub fn mkdir_p(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let mut current = String::new();
@@ -182,7 +182,7 @@ pub fn write_file(session: &Arc<Mutex<Session>>, path: &str, data: &[u8]) -> Pyl
     Ok(())
 }
 
-/// Set file permissions (chmod).
+
 pub fn chmod(session: &Arc<Mutex<Session>>, path: &str, mode: u32) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -198,7 +198,7 @@ pub fn chmod(session: &Arc<Mutex<Session>>, path: &str, mode: u32) -> PylonResul
         .map_err(|e| PylonError::Sftp(format!("chmod {path} {:o}: {e}", mode)))
 }
 
-/// Set file owner and group (chown).
+
 pub fn chown(session: &Arc<Mutex<Session>>, path: &str, uid: u32, gid: u32) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -214,7 +214,7 @@ pub fn chown(session: &Arc<Mutex<Session>>, path: &str, uid: u32, gid: u32) -> P
         .map_err(|e| PylonError::Sftp(format!("chown {path} {uid}:{gid}: {e}")))
 }
 
-/// Set file timestamps (for timestamp preservation during sync).
+
 pub fn set_times(session: &Arc<Mutex<Session>>, path: &str, atime: u64, mtime: u64) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -230,7 +230,7 @@ pub fn set_times(session: &Arc<Mutex<Session>>, path: &str, atime: u64, mtime: u
         .map_err(|e| PylonError::Sftp(format!("utimes {path}: {e}")))
 }
 
-/// Create a symbolic link on the remote server.
+
 pub fn create_symlink(session: &Arc<Mutex<Session>>, target: &str, linkname: &str) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -238,7 +238,7 @@ pub fn create_symlink(session: &Arc<Mutex<Session>>, target: &str, linkname: &st
         .map_err(|e| PylonError::Sftp(format!("symlink {target} -> {linkname}: {e}")))
 }
 
-/// Read the target of a symbolic link.
+
 pub fn readlink(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -247,7 +247,7 @@ pub fn readlink(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String
         .map_err(|e| PylonError::Sftp(format!("readlink {path}: {e}")))
 }
 
-/// Resolve a path (follow all symlinks) to its canonical form.
+
 pub fn realpath(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -256,7 +256,7 @@ pub fn realpath(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String
         .map_err(|e| PylonError::Sftp(format!("realpath {path}: {e}")))
 }
 
-/// Recursively list all files in a directory (DFS). Returns relative paths from base.
+
 pub fn recursive_list(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<Vec<RemoteEntry>> {
     let mut result = Vec::new();
     let entries = list_dir(session, path)?;

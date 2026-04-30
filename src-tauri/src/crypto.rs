@@ -17,16 +17,15 @@ pub const NONCE_LEN: usize = 12;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct EncryptedBlob {
-    /// Base64-encoded salt used for key derivation
+
     pub salt: String,
-    /// Base64-encoded nonce
+
     pub nonce: String,
-    /// Base64-encoded ciphertext + GCM auth tag
+
     pub ciphertext: String,
 }
 
-/// Derive a 256-bit key from a passphrase using Argon2id.
-/// `salt` must be raw bytes — do NOT base64-encode before passing.
+
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> PylonResult<[u8; KEY_LEN]> {
     let argon2 = Argon2::default();
     let mut key = [0u8; KEY_LEN];
@@ -37,7 +36,7 @@ pub fn derive_key(passphrase: &str, salt: &[u8]) -> PylonResult<[u8; KEY_LEN]> {
     Ok(key)
 }
 
-/// Encrypt plaintext with AES-256-GCM. Derives key via Argon2id from passphrase.
+
 pub fn encrypt(passphrase: &str, plaintext: &[u8]) -> PylonResult<EncryptedBlob> {
     let mut salt = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
@@ -58,7 +57,7 @@ pub fn encrypt(passphrase: &str, plaintext: &[u8]) -> PylonResult<EncryptedBlob>
     })
 }
 
-/// Decrypt an EncryptedBlob with a passphrase.
+
 pub fn decrypt(passphrase: &str, blob: &EncryptedBlob) -> PylonResult<Vec<u8>> {
     let salt = B64
         .decode(&blob.salt)
@@ -82,7 +81,7 @@ pub fn decrypt(passphrase: &str, blob: &EncryptedBlob) -> PylonResult<Vec<u8>> {
     Ok(plaintext)
 }
 
-/// Encrypt raw bytes with an already-derived raw key (no passphrase, for in-memory use).
+
 pub fn encrypt_with_key(key: &[u8; KEY_LEN], plaintext: &[u8]) -> PylonResult<Vec<u8>> {
     let key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(key);
@@ -99,7 +98,7 @@ pub fn encrypt_with_key(key: &[u8; KEY_LEN], plaintext: &[u8]) -> PylonResult<Ve
     Ok(out)
 }
 
-/// Decrypt bytes produced by `encrypt_with_key`.
+
 pub fn decrypt_with_key(key: &[u8; KEY_LEN], data: &[u8]) -> PylonResult<Vec<u8>> {
     if data.len() < NONCE_LEN {
         return Err(PylonError::Crypto("Data too short".into()));
@@ -114,7 +113,7 @@ pub fn decrypt_with_key(key: &[u8; KEY_LEN], data: &[u8]) -> PylonResult<Vec<u8>
         .map_err(|_| PylonError::Crypto("Decryption failed".into()))
 }
 
-/// Generate a random 256-bit key.
+
 pub fn generate_key() -> [u8; KEY_LEN] {
     let mut key = [0u8; KEY_LEN];
     OsRng.fill_bytes(&mut key);
