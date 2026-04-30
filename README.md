@@ -8,6 +8,22 @@ Cross-platform SSH and SFTP desktop client built with [Tauri v2](https://tauri.a
 
 ---
 
+## Screenshots
+
+| Files | Terminal |
+|---|---|
+| ![Files tab](landing/images/files.png) | ![Terminal tab](landing/images/terminal.png) |
+
+| Sync | Transfers |
+|---|---|
+| ![Sync tab](landing/images/sync.png) | ![Transfers drawer](landing/images/transfers.png) |
+
+| Settings | ZVault |
+|---|---|
+| ![Settings](landing/images/settings.png) | ![ZVault](landing/images/zvault.png) |
+
+---
+
 ## Features
 
 ### File Management
