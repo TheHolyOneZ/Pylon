@@ -63,7 +63,6 @@ export function PathBreadcrumb({ path, side, onNavigate }: Props) {
     setShowBookmarks((v) => !v);
   }
 
-
   useEffect(() => {
     if (!showBookmarks) return;
     function handle(e: MouseEvent) {

@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { TransferProgress, TransferRecord } from "../types";
 import * as api from "../lib/tauri";
 
-
 const SPEED_SAMPLES = 5;
 
 interface SpeedSample { bytes: number; ts: number }

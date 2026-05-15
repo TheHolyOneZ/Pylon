@@ -1,6 +1,5 @@
 
 
-
 use std::path::PathBuf;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -18,7 +17,6 @@ pub enum HostKeyStatus {
     Changed { old_fingerprint: String, new_fingerprint: String, key_type: String },
 }
 
-
 pub fn sha256_fingerprint(key_bytes: &[u8]) -> String {
     let digest = Sha256::digest(key_bytes);
     let b64 = B64.encode(digest);
@@ -29,7 +27,6 @@ pub fn sha256_fingerprint(key_bytes: &[u8]) -> String {
 pub fn known_hosts_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"))
 }
-
 
 pub fn check_host_key(
     host: &str,
@@ -57,7 +54,6 @@ pub fn check_host_key(
 
     let new_fp = sha256_fingerprint(key_bytes);
 
-
     let host_pattern = if port == 22 {
         host.to_string()
     } else {
@@ -77,7 +73,6 @@ pub fn check_host_key(
         let patterns = parts[0];
         let _algo = parts[1];
         let stored_key_b64 = parts[2].split_whitespace().next().unwrap_or("");
-
 
         let matches = patterns.split(',').any(|p| {
             let p = p.trim();
@@ -110,7 +105,6 @@ pub fn check_host_key(
         key_type: key_type.to_string(),
     })
 }
-
 
 pub fn add_host_key(
     host: &str,
@@ -147,7 +141,6 @@ pub fn add_host_key(
         .append(true)
         .open(&path)?;
     file.write_all(line.as_bytes())?;
-
 
     #[cfg(unix)]
     {

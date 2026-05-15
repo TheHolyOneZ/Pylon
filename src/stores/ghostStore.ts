@@ -6,7 +6,6 @@ function normDir(p: string): string {
   return p.replace(/[\\/]+$/, "") || "/";
 }
 
-
 export interface GhostEntry {
   transferId: string;
   fileName: string;
@@ -20,7 +19,6 @@ export interface GhostEntry {
   state: "queued" | "running" | "paused" | "completed" | "failed";
   sessionId: string;
 }
-
 
 export interface BatchGhost {
   batchId: string;
@@ -69,7 +67,6 @@ export const useGhostStore = create<GhostStore>((set) => ({
   batches: [],
   batchMap: {},
 
-
   addGhost: (g) =>
     set((s) => ({
       ghosts: [
@@ -85,7 +82,6 @@ export const useGhostStore = create<GhostStore>((set) => ({
 
   removeGhost: (id) =>
     set((s) => ({ ghosts: s.ghosts.filter((g) => g.transferId !== id) })),
-
 
   addBatch: (b) =>
     set((s) => ({
@@ -142,7 +138,6 @@ export const useGhostStore = create<GhostStore>((set) => ({
       batchMap: Object.fromEntries(Object.entries(s.batchMap).filter(([, v]) => v !== batchId)),
     })),
 }));
-
 
 export function handleBatchNew(b: {
   batch_id: string;
@@ -223,7 +218,6 @@ export function handleTransferProgress(p: {
     }
     return;
   }
-
 
   const { updateGhost, removeGhost } = store;
   if (p.state === "completed" || p.state === "cancelled") {

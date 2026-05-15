@@ -1,6 +1,5 @@
 
 
-
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -54,7 +53,6 @@ impl VaultManager {
             ProfileList::default()
         };
 
-
         let mut profiles = profiles;
         if profiles.profiles.is_empty() {
             let default = VaultProfile {
@@ -105,7 +103,6 @@ impl VaultManager {
             .cloned()
             .ok_or_else(|| PylonError::Vault(format!("Active profile '{active_id}' not found")))
     }
-
 
     pub fn list_profiles(&self) -> Vec<VaultProfile> {
         let profiles = self.profiles.lock().unwrap();
@@ -161,7 +158,6 @@ impl VaultManager {
         Ok(profile)
     }
 
-
     pub fn delete_profile(&self, id: &str) -> PylonResult<()> {
         {
             let profiles = self.profiles.lock().unwrap();
@@ -171,7 +167,6 @@ impl VaultManager {
                 ));
             }
         }
-
 
         {
             let profiles = self.profiles.lock().unwrap();
@@ -183,13 +178,11 @@ impl VaultManager {
             }
         }
 
-
         let new_active = {
             let mut profiles = self.profiles.lock().unwrap();
             profiles.profiles.retain(|p| p.id != id);
             let mut vaults = self.vaults.lock().unwrap();
             vaults.remove(id);
-
 
             if profiles.active_id == id {
                 let first = profiles.profiles.first().map(|p| p.id.clone()).unwrap_or_else(|| "default".into());
@@ -216,7 +209,6 @@ impl VaultManager {
         }
         Err(PylonError::Vault(format!("Profile '{id}' not found")))
     }
-
 
     pub fn unlock(&self, passphrase: &str) -> PylonResult<()> {
         self.active_vault()?.unlock(passphrase)

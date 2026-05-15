@@ -24,7 +24,6 @@
     user-select: none;
   }
 
-
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button {
     -webkit-appearance: none;
@@ -34,7 +33,6 @@
     -moz-appearance: textfield;
     appearance: textfield;
   }
-
 
   select {
     -webkit-appearance: none;
@@ -58,13 +56,11 @@
     color: #e2e8f0;
   }
 
-
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: #07090f; }
   ::-webkit-scrollbar-thumb { background: #1a2030; border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: #00e5ff33; }
 }
-
 
 [data-theme="night"] {
   --color-pylon-accent: #b44dff;
@@ -84,7 +80,6 @@
 [data-theme="night"] body { background: #0d1117; }
 [data-theme="night"] ::-webkit-scrollbar-track { background: #0d1117; }
 
-
 [data-theme="soft-void"] {
   --color-pylon-accent: #38bdf8;
 }
@@ -99,7 +94,6 @@
 [data-theme="soft-void"] .border-pylon-cyan\/50 { border-color: rgba(56,189,248,0.5) !important; }
 [data-theme="soft-void"] .hover\:bg-pylon-cyan\/20:hover { background-color: rgba(56,189,248,0.2) !important; }
 
-
 [data-theme="neon"] .text-pylon-cyan  { color: #00ff9d !important; }
 [data-theme="neon"] .border-pylon-cyan { border-color: #00ff9d !important; }
 [data-theme="neon"] .bg-pylon-cyan\/10 { background-color: rgba(0,255,157,0.1) !important; }
@@ -113,7 +107,6 @@
 [data-theme="neon"] body { background: #020d06; }
 [data-theme="neon"] ::-webkit-scrollbar-track { background: #020d06; }
 
-
 [data-theme="amber"] .text-pylon-cyan  { color: #f59e0b !important; }
 [data-theme="amber"] .border-pylon-cyan { border-color: #f59e0b !important; }
 [data-theme="amber"] .bg-pylon-cyan\/10 { background-color: rgba(245,158,11,0.1) !important; }
@@ -126,7 +119,6 @@
 [data-theme="amber"] ::-webkit-scrollbar-thumb:hover { background: rgba(245,158,11,0.2); }
 [data-theme="amber"] body { background: #0c0a04; }
 
-
 [data-theme="rose"] .text-pylon-cyan  { color: #f43f5e !important; }
 [data-theme="rose"] .border-pylon-cyan { border-color: #f43f5e !important; }
 [data-theme="rose"] .bg-pylon-cyan\/10 { background-color: rgba(244,63,94,0.1) !important; }
@@ -138,7 +130,6 @@
 [data-theme="rose"] .hover\:bg-pylon-cyan\/20:hover { background-color: rgba(244,63,94,0.2) !important; }
 [data-theme="rose"] ::-webkit-scrollbar-thumb:hover { background: rgba(244,63,94,0.2); }
 [data-theme="rose"] body { background: #0c0205; }
-
 
 [data-theme="forest"] .text-pylon-cyan  { color: #10b981 !important; }
 [data-theme="forest"] .border-pylon-cyan { border-color: #10b981 !important; }

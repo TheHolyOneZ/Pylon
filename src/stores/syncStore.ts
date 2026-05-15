@@ -142,7 +142,6 @@ export const useSyncStore = create<SyncStore>((set) => ({
         "sync://done",
         (e) => {
 
-
           set((state) => ({
             syncs: state.syncs.map((s) =>
               s.id === e.payload.sync_id ? { ...s, active: false } : s

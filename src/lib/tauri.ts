@@ -1,6 +1,5 @@
 
 
-
 import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "../stores/settingsStore";
 import {
@@ -17,17 +16,14 @@ import {
   TransferRecord,
 } from "../types";
 
-
 export function normalizePath(p: string): string {
   return p.replace(/\\/g, "/");
 }
-
 
 export function joinLocalPath(parent: string, child: string): string {
   const base = normalizePath(parent).replace(/\/+$/, "");
   return `${base}/${child}`;
 }
-
 
 export interface ConnectResult {
   status: "connected" | "host_key_unknown" | "host_key_changed";
@@ -62,7 +58,6 @@ export const testConnection = (args: {
   password?: string;
   privateKey?: string;
 }) => invoke<boolean>("test_connection", args);
-
 
 export const listRemoteDir = (sessionId: string, path: string) =>
   invoke<RemoteEntry[]>("list_remote_dir", { sessionId, path });
@@ -99,7 +94,6 @@ export const createRemoteDir = (sessionId: string, path: string) =>
 
 export const statRemote = (sessionId: string, path: string) =>
   invoke<RemoteEntry>("stat_remote", { sessionId, path });
-
 
 export const uploadFile = (
   sessionId: string,
@@ -145,7 +139,6 @@ export const cancelTransfer = (transferId: string) =>
 
 export const listTransfers = () => invoke<TransferRecord[]>("list_transfers");
 
-
 export const createTerminal = (
   sessionId: string,
   cols: number,
@@ -165,7 +158,6 @@ export const resizeTerminal = (
 export const closeTerminal = (terminalId: string) =>
   invoke<void>("close_terminal", { terminalId });
 
-
 export const stripFileMetadata = (localPath: string) =>
   invoke<void>("strip_file_metadata", { localPath });
 
@@ -174,7 +166,6 @@ export const stripFileMetadataPreview = (localPath: string) =>
 
 export const getFileMetadata = (localPath: string) =>
   invoke<MetadataField[]>("get_file_metadata", { localPath });
-
 
 export const startSync = (args: {
   sessionId: string;
@@ -227,7 +218,6 @@ export const listSuspendedSyncs = () =>
 export const deleteSuspendedSync = (syncId: string) =>
   invoke<void>("delete_suspended_sync", { syncId });
 
-
 export interface VaultProfile {
   id: string;
   name: string;
@@ -254,7 +244,6 @@ export const vaultDeleteProfile = (profileId: string) =>
 
 export const vaultRenameProfile = (profileId: string, name: string, color: string, icon: string) =>
   invoke<void>("vault_rename_profile", { profileId, name, color, icon });
-
 
 export const vaultUnlock = (passphrase: string) =>
   invoke<void>("vault_unlock", { passphrase });
@@ -285,10 +274,11 @@ export const vaultDeleteCredential = (passphrase: string, id: string) =>
 export const vaultConnect = (credentialId: string) =>
   invoke<ConnectResult>("vault_connect", { credentialId });
 
+export const vaultAcceptHostKeyAndConnect = (args: { credentialId: string; permanent: boolean }) =>
+  invoke<import("../types").ConnectionInfo>("vault_accept_host_key_and_connect", args);
 
 export const listLocalDir = async (path: string): Promise<LocalEntry[]> => {
   const entries = await invoke<LocalEntry[]>("list_local_dir", { path });
-
 
   return entries.map((e) => ({ ...e, path: normalizePath(e.path) }));
 };
@@ -356,7 +346,6 @@ export const acceptHostKeyAndConnect = (args: {
   password?: string; privateKey?: string; label: string;
   permanent: boolean;
 }) => invoke<import("../types").ConnectionInfo>("accept_host_key_and_connect", args);
-
 
 export const listSnippets = () => invoke<Snippet[]>("list_snippets");
 

@@ -116,7 +116,6 @@ pub async fn open_in_file_manager(path: String) -> Result<(), PylonError> {
     Ok(())
 }
 
-
 #[tauri::command]
 pub async fn get_home_dir() -> Result<String, PylonError> {
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
@@ -135,13 +134,11 @@ pub async fn get_home_dir() -> Result<String, PylonError> {
     }
 }
 
-
 #[tauri::command]
 pub async fn path_join(parent: String, child: String) -> Result<String, PylonError> {
     let p = std::path::PathBuf::from(&parent).join(&child);
     Ok(p.to_string_lossy().into_owned())
 }
-
 
 #[tauri::command]
 pub async fn local_path_exists(path: String) -> Result<bool, PylonError> {
@@ -171,7 +168,6 @@ pub async fn delete_local_batch(paths: Vec<String>) -> Result<(), PylonError> {
     }
     Ok(())
 }
-
 
 #[tauri::command]
 pub async fn get_platform() -> &'static str {

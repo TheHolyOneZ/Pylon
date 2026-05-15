@@ -15,7 +15,6 @@ import { useLockPasswordPrompt } from "../ui/LockPasswordPrompt";
 import { toast } from "../../stores/toastStore";
 import type { AppSettings } from "../../stores/settingsStore";
 
-
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`bg-void-800 border border-void-600/60 rounded-xl overflow-hidden ${className}`}>
@@ -105,7 +104,6 @@ function NumericInput({
     </div>
   );
 }
-
 
 interface SecurityTabProps { s: AppSettings & { set: <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => void } }
 function SecurityTab({ s }: SecurityTabProps) {
@@ -257,7 +255,6 @@ function SecurityTab({ s }: SecurityTabProps) {
   );
 }
 
-
 type Tab = "snippets" | "transfers" | "terminal" | "security" | "appearance" | "general" | "about";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -272,7 +269,6 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 
 const INPUT = "w-full bg-void-900 border border-void-600 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-pylon-cyan/50 transition-colors";
 const MONO_INPUT = `${INPUT} font-mono text-xs`;
-
 
 export function SettingsPanel() {
   const [tab, setTab] = useState<Tab>("snippets");

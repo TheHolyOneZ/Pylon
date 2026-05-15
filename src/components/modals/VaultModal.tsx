@@ -7,8 +7,10 @@ import {
 } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUiStore } from "../../stores/uiStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useConfirm } from "../ui/ConfirmDialog";
 import { toast } from "../../stores/toastStore";
+import { HostKeyModal } from "./HostKeyModal";
 import { hasLockPassword } from "../AppLock";
 import { useLockPasswordPrompt } from "../ui/LockPasswordPrompt";
 import * as api from "../../lib/tauri";
@@ -38,7 +40,6 @@ export function VaultModal() {
   const promptLockPassword = useLockPasswordPrompt();
   const hasLock = hasLockPassword();
 
-
   const [profiles, setProfiles] = useState<VaultProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState("default");
   const [showProfilePicker, setShowProfilePicker] = useState(false);
@@ -47,11 +48,9 @@ export function VaultModal() {
   const [newProfileColor, setNewProfileColor] = useState("#00e5ff");
   const [newProfileIcon, setNewProfileIcon] = useState(DEFAULT_ICON);
 
-
   const [passphrase, setPassphrase] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
 
   const [showAdd, setShowAdd] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -63,8 +62,16 @@ export function VaultModal() {
   const [addKey, setAddKey] = useState("");
   const [addWorking, setAddWorking] = useState(false);
 
-
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [pendingVaultHostKey, setPendingVaultHostKey] = useState<null | {
+    credentialId: string;
+    credLabel: string;
+    host: string;
+    port: number;
+    fingerprint: string;
+    keyType: string;
+    changed: boolean;
+  }>(null);
 
   useEffect(() => {
     loadProfiles();
@@ -218,11 +225,50 @@ export function VaultModal() {
         setCredentialId(result.info.id, cred.id);
         setVaultModal(false);
         toast.success("Connected", cred.label);
-      } else if (result.status === "host_key_unknown") {
-        toast.warning("Unknown host key", `${cred.host} — accept via Quick Connect first`);
-      } else {
-        toast.error("Connection failed", result.status);
+        return;
       }
+      if (result.status === "host_key_unknown" || result.status === "host_key_changed") {
+        const policy = useSettingsStore.getState().hostKeyPolicy;
+        if (policy === "strict") {
+          toast.error("Connection rejected", `Strict policy: ${result.status === "host_key_changed" ? "host key changed" : "unknown host key"} for ${cred.host}`);
+        } else if (policy === "auto-accept") {
+          const info = await api.vaultAcceptHostKeyAndConnect({ credentialId: cred.id, permanent: false });
+          addConnection(info);
+          setCredentialId(info.id, cred.id);
+          setVaultModal(false);
+          toast.success("Connected", cred.label);
+        } else {
+          setPendingVaultHostKey({
+            credentialId: cred.id,
+            credLabel: cred.label,
+            host: cred.host,
+            port: cred.port,
+            fingerprint: result.verification?.fingerprint ?? "unknown",
+            keyType: result.verification?.key_type ?? "unknown",
+            changed: result.status === "host_key_changed",
+          });
+        }
+        return;
+      }
+      toast.error("Connection failed", result.status);
+    } catch (e: any) {
+      toast.error("Connection failed", e?.message ?? errMsg(e));
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  async function handleVaultHostKeyAccept(permanent: boolean) {
+    if (!pendingVaultHostKey) return;
+    const { credentialId, credLabel } = pendingVaultHostKey;
+    setPendingVaultHostKey(null);
+    setConnecting(credentialId);
+    try {
+      const info = await api.vaultAcceptHostKeyAndConnect({ credentialId, permanent });
+      addConnection(info);
+      setCredentialId(info.id, credentialId);
+      setVaultModal(false);
+      toast.success("Connected", credLabel);
     } catch (e: any) {
       toast.error("Connection failed", e?.message ?? errMsg(e));
     } finally {
@@ -231,6 +277,20 @@ export function VaultModal() {
   }
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId);
+
+  if (pendingVaultHostKey) {
+    return (
+      <HostKeyModal
+        host={pendingVaultHostKey.host}
+        port={pendingVaultHostKey.port}
+        fingerprint={pendingVaultHostKey.fingerprint}
+        keyType={pendingVaultHostKey.keyType}
+        changed={pendingVaultHostKey.changed}
+        onAccept={handleVaultHostKeyAccept}
+        onReject={() => setPendingVaultHostKey(null)}
+      />
+    );
+  }
 
   return (
     <motion.div

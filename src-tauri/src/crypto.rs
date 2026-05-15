@@ -25,7 +25,6 @@ pub struct EncryptedBlob {
     pub ciphertext: String,
 }
 
-
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> PylonResult<[u8; KEY_LEN]> {
     let argon2 = Argon2::default();
     let mut key = [0u8; KEY_LEN];
@@ -35,7 +34,6 @@ pub fn derive_key(passphrase: &str, salt: &[u8]) -> PylonResult<[u8; KEY_LEN]> {
         .map_err(|e| PylonError::Crypto(format!("Key derivation failed: {e}")))?;
     Ok(key)
 }
-
 
 pub fn encrypt(passphrase: &str, plaintext: &[u8]) -> PylonResult<EncryptedBlob> {
     let mut salt = [0u8; SALT_LEN];
@@ -56,7 +54,6 @@ pub fn encrypt(passphrase: &str, plaintext: &[u8]) -> PylonResult<EncryptedBlob>
         ciphertext: B64.encode(ciphertext),
     })
 }
-
 
 pub fn decrypt(passphrase: &str, blob: &EncryptedBlob) -> PylonResult<Vec<u8>> {
     let salt = B64
@@ -81,7 +78,6 @@ pub fn decrypt(passphrase: &str, blob: &EncryptedBlob) -> PylonResult<Vec<u8>> {
     Ok(plaintext)
 }
 
-
 pub fn encrypt_with_key(key: &[u8; KEY_LEN], plaintext: &[u8]) -> PylonResult<Vec<u8>> {
     let key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(key);
@@ -91,13 +87,11 @@ pub fn encrypt_with_key(key: &[u8; KEY_LEN], plaintext: &[u8]) -> PylonResult<Ve
         .encrypt(&nonce, plaintext)
         .map_err(|e| PylonError::Crypto(format!("Encryption failed: {e}")))?;
 
-
     let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
-
 
 pub fn decrypt_with_key(key: &[u8; KEY_LEN], data: &[u8]) -> PylonResult<Vec<u8>> {
     if data.len() < NONCE_LEN {
@@ -112,7 +106,6 @@ pub fn decrypt_with_key(key: &[u8; KEY_LEN], data: &[u8]) -> PylonResult<Vec<u8>
         .decrypt(nonce, ciphertext)
         .map_err(|_| PylonError::Crypto("Decryption failed".into()))
 }
-
 
 pub fn generate_key() -> [u8; KEY_LEN] {
     let mut key = [0u8; KEY_LEN];

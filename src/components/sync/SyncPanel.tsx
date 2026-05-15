@@ -145,7 +145,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [protectedPatternsRaw, setProtectedPatternsRaw] = useState("");
   const [dryRun, setDryRun] = useState(false);
@@ -757,7 +756,6 @@ export function SyncPanel() {
     api.listSyncs().then(store.setSyncs).catch(() => {});
     api.listSuspendedSyncs().then(store.setSuspendedSyncs).catch(() => {});
   }, []);
-
 
   useEffect(() => {
     if (selectedSyncId && !syncs.find((s) => s.id === selectedSyncId)) {

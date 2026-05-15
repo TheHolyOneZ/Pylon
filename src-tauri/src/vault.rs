@@ -1,6 +1,5 @@
 
 
-
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -50,12 +49,10 @@ struct VaultFile {
 
     vault_salt: String,
 
-
     #[serde(default)]
     sentinel: Option<EncryptedBlob>,
     entries: HashMap<String, EncryptedBlob>,
 }
-
 
 struct VaultInner {
     credentials: HashMap<String, Credential>,
@@ -99,22 +96,18 @@ impl Vault {
             let data = std::fs::read_to_string(&vault_path)
                 .map_err(|e| PylonError::Vault(format!("Read vault: {e}")))?;
 
-
             if let Ok(vault_file) = serde_json::from_str::<VaultFile>(&data) {
                 let salt = B64
                     .decode(&vault_file.vault_salt)
                     .map_err(|e| PylonError::Vault(format!("Bad vault salt: {e}")))?;
-
 
                 if let Some(ref sentinel_blob) = vault_file.sentinel {
                     crypto::decrypt(passphrase, sentinel_blob)
                         .map_err(|_| PylonError::Vault("Wrong passphrase".into()))?;
                 } else if vault_file.entries.is_empty() {
 
-
                     return Err(PylonError::Vault("Vault exists but cannot verify passphrase — please reset the vault".into()));
                 }
-
 
                 let key = crypto::derive_key(passphrase, &salt)?;
                 inner.session_key = Some(key);
@@ -132,7 +125,6 @@ impl Vault {
                 let key = crypto::derive_key(passphrase, v1_salt)?;
                 inner.session_key = Some(key);
 
-
                 #[derive(Deserialize)]
                 struct V1VaultFile {
                     entries: HashMap<String, EncryptedBlob>,
@@ -149,7 +141,6 @@ impl Vault {
                 }
             }
         } else {
-
 
             let mut tmp_salt = [0u8; SALT_LEN];
             rand::rngs::OsRng.fill_bytes(&mut tmp_salt);
@@ -213,7 +204,6 @@ impl Vault {
         self.persist(passphrase)
     }
 
-
     pub fn get_credential_with_secret(&self, id: &str) -> PylonResult<Credential> {
         let inner = self.inner.read().unwrap();
         if inner.session_key.is_none() {
@@ -267,7 +257,6 @@ impl Vault {
         self.persist(passphrase)
     }
 
-
     pub fn reset(&self) -> PylonResult<()> {
         let mut inner = self.inner.write().unwrap();
         let vault_path = inner.vault_path.clone();
@@ -287,13 +276,11 @@ impl Vault {
         let inner = self.inner.read().unwrap();
         let vault_path = inner.vault_path.clone();
 
-
         let vault_salt = inner.vault_salt.clone().unwrap_or_else(|| {
             let mut s = [0u8; SALT_LEN];
             rand::rngs::OsRng.fill_bytes(&mut s);
             B64.encode(s)
         });
-
 
         let sentinel = Some(crypto::encrypt(passphrase, b"pylon-vault-sentinel-v2")?);
 

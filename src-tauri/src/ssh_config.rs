@@ -1,6 +1,5 @@
 
 
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +17,6 @@ pub struct SshConfigHost {
 pub fn ssh_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".ssh").join("config"))
 }
-
 
 pub fn list_ssh_config_hosts() -> Vec<SshConfigHost> {
     let path = match ssh_config_path() {
@@ -39,7 +37,6 @@ pub fn list_ssh_config_hosts() -> Vec<SshConfigHost> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-
 
         let (key, value) = if let Some(idx) = line.find(|c: char| c == ' ' || c == '\t' || c == '=') {
             let k = line[..idx].trim();
@@ -83,7 +80,6 @@ pub fn list_ssh_config_hosts() -> Vec<SshConfigHost> {
             }
             "identityfile" => {
                 if let Some(ref mut h) = current {
-
 
                     let expanded = if value.starts_with('~') {
                         let rest = value

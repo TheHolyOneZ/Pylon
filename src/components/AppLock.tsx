@@ -5,7 +5,6 @@ import { Lock, Shield } from "lucide-react";
 const LOCK_KEY = "pylon-app-lock-hash";
 const SETUP_KEY = "pylon-app-lock-setup-done";
 
-
 async function sha256(text: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -39,7 +38,6 @@ function isFirstLaunch(): boolean {
 function markSetupDone() {
   localStorage.setItem(SETUP_KEY, "1");
 }
-
 
 function SetupScreen({ onDone }: { onDone: () => void }) {
   const [pw, setPw] = useState("");
@@ -123,7 +121,6 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
   );
 }
 
-
 function LockScreen({ onUnlock }: { onUnlock: () => void }) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
@@ -184,7 +181,6 @@ function LockScreen({ onUnlock }: { onUnlock: () => void }) {
     </motion.div>
   );
 }
-
 
 interface AppLockProps {
   children: React.ReactNode;

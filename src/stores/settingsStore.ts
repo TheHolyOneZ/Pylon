@@ -13,20 +13,16 @@ export interface AppSettings {
   autoVerifyChecksum: boolean;
   autoStripMetadata: boolean;
 
-
   termFontFamily: string;
   termFontSize: number;
   termScrollback: number;
   defaultShell: DefaultShell;
 
-
   vaultAutoLockMinutes: number;
   hostKeyPolicy: HostKeyPolicy;
 
-
   theme: ThemeName;
   sidebarWidth: number;
-
 
   defaultLocalPath: string;
   autoReconnect: boolean;

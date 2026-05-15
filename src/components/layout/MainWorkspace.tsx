@@ -55,7 +55,6 @@ export function MainWorkspace() {
     return <div className="flex-1 overflow-hidden"><TerminalPane /></div>;
   }
 
-
   const showBottom = bottomMode !== "hidden";
 
   return (

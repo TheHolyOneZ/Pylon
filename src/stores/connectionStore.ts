@@ -86,7 +86,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   disconnectFromServer: async (id) => {
     const conn = get().connections.find((c) => c.id === id);
 
-
     const { tabs, clearTabsForSession } = useTerminalStore.getState();
     const sessionTabs = tabs.filter((t) => t.sessionId === id);
     await Promise.allSettled(sessionTabs.map((t) => api.closeTerminal(t.terminalId)));

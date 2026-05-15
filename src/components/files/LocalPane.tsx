@@ -236,7 +236,6 @@ export function LocalPane() {
     let skipPaths = new Set<string>();
     if (files.length > 0) {
 
-
       const result = await preflightCheck(
         files.map((i) => ({ name: i.name, destPath: joinLocalPath(localPath, i.name) })),
         (p) => api.localPathExists(p),

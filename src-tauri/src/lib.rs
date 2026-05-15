@@ -1,6 +1,5 @@
 
 
-
 pub mod commands;
 pub mod crypto;
 pub mod error;
@@ -122,6 +121,7 @@ pub fn run() {
             commands::vault::vault_delete_credential,
             commands::vault::vault_is_unlocked,
             commands::vault::vault_connect,
+            commands::vault::vault_accept_host_key_and_connect,
 
             commands::local_fs::list_local_dir,
             commands::local_fs::get_local_drives,

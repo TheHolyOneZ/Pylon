@@ -188,7 +188,6 @@ export function RemotePane() {
     let skipPaths = new Set<string>();
     if (files.length > 0) {
 
-
       const result = await preflightCheck(
         files.map((e) => ({ name: e.name, destPath: joinLocalPath(localPath, e.name) })),
         (p) => api.localPathExists(p),
@@ -302,7 +301,6 @@ export function RemotePane() {
           if (!x.path) { toast.warning("Drop failed", "Cannot read file path from OS drop"); return false; }
           return true;
         });
-
 
       const result = await preflightCheck(
         osFiles.map((x) => ({ name: x.file.name, destPath: `${dest}/${x.file.name}` })),

@@ -37,11 +37,9 @@ export default function App() {
   const { theme } = useSettingsStore();
   const addActivity = useActivityStore((s) => s.add);
 
-
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
-
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -70,7 +68,6 @@ export default function App() {
     };
   }, []);
 
-
   useEffect(() => {
     let closing = false;
     let unlisten: (() => void) | undefined;
@@ -97,7 +94,6 @@ export default function App() {
   useEffect(() => {
     startListening();
 
-
     function handleKeys(e: KeyboardEvent) {
       if (e.ctrlKey && e.key === "t") { e.preventDefault(); toggleTransferDrawer(); }
       if (e.ctrlKey && e.key === "n") { e.preventDefault(); useUiStore.getState().setConnectModal(true); }
@@ -110,7 +106,6 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKeys);
 
-
     const unlistenDied = listen("ssh://session-died", async (e: any) => {
       const sessionId: string = e.payload.session_id;
       const { connections, disconnectFromServer, credentialIdBySession } = useConnectionStore.getState();
@@ -121,7 +116,6 @@ export default function App() {
 
       const { autoReconnect } = useSettingsStore.getState();
       const credentialId = credentialIdBySession[sessionId];
-
 
       disconnectFromServer(sessionId).catch(() => {});
 
@@ -144,7 +138,6 @@ export default function App() {
       }
     });
 
-
     const unlisten = listen("ssh://host-key-verify", (e: any) => {
       toast.warning("Unknown host key", `${e.payload.host}: ${e.payload.fingerprint}`);
       addActivity({ type: "warning", message: `Unknown host key: ${e.payload.host}`, detail: e.payload.fingerprint });
@@ -154,7 +147,6 @@ export default function App() {
       toast.error("⚠ Host key changed!", `${e.payload.host} — possible MITM. Verify before reconnecting.`);
       addActivity({ type: "error", message: `Host key CHANGED: ${e.payload.host} — possible MITM attack` });
     });
-
 
     const unlistenBatch = listen("transfer://batch-new", (e: any) => {
       handleBatchNew(e.payload);
@@ -187,7 +179,6 @@ export default function App() {
       }
     });
 
-
     const unlistenDrop = getCurrentWebview().onDragDropEvent(async (event) => {
       if (event.payload.type !== "drop") return;
       const paths: string[] = (event.payload as any).paths ?? [];
@@ -196,7 +187,6 @@ export default function App() {
       const { activeSessionId } = useConnectionStore.getState();
       const fileStore = useFileStore.getState();
       const strip = useSettingsStore.getState().autoStripMetadata;
-
 
       const pos = (event.payload as any).position as { x: number; y: number } | undefined;
       const midX = window.innerWidth / 2;
@@ -224,7 +214,6 @@ export default function App() {
           }
         }
       } else {
-
 
         const normalizedFirst = normalizePath(paths[0]);
         const firstParent = normalizedFirst.replace(/\/[^/]+$/, "");

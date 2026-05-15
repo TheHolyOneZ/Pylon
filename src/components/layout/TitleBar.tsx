@@ -45,7 +45,7 @@ export function TitleBar() {
       <div className="flex items-center gap-2 px-4 mr-2 shrink-0 pointer-events-none">
         <img src="/pylon-icon.png" alt="Pylon" className="w-4 h-4 rounded-sm opacity-90" />
         <span className="text-[13px] font-semibold tracking-tight text-slate-200">pylon</span>
-        <span className="px-1.5 py-px rounded bg-void-700 border border-void-600 text-[9px] font-mono text-slate-500 tracking-wider">v0.1</span>
+        <span className="px-1.5 py-px rounded bg-void-700 border border-void-600 text-[9px] font-mono text-slate-500 tracking-wider">v0.2</span>
       </div>
 
       {}

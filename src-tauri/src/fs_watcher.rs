@@ -54,22 +54,17 @@ pub struct SyncConfig {
     #[serde(default)]
     pub expected_fingerprint: String,
 
-
     #[serde(default)]
     pub protected_patterns: Vec<String>,
-
 
     #[serde(default)]
     pub dry_run: bool,
 
-
     #[serde(default)]
     pub max_file_size_kb: Option<u64>,
 
-
     #[serde(default)]
     pub sync_deletes: bool,
-
 
     #[serde(default)]
     pub initial_sync_only: bool,
@@ -125,7 +120,6 @@ impl WatcherRegistry {
             pause_flags: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-
 
     pub fn on_session_removed(&self, session_id: &str) -> Vec<SyncConfig> {
         let mut entries = self.entries.lock().unwrap();
@@ -217,7 +211,6 @@ impl WatcherRegistry {
         let from_vault = config.from_vault;
         let expected_fingerprint = config.expected_fingerprint.clone();
 
-
         let protected_patterns = config.protected_patterns.clone();
         let max_file_size_kb = config.max_file_size_kb;
         let initial_sync_only = config.initial_sync_only;
@@ -243,7 +236,6 @@ impl WatcherRegistry {
 
         std::thread::spawn(move || {
 
-
             let mut first_flush_done = false;
 
             loop {
@@ -265,13 +257,11 @@ impl WatcherRegistry {
 
                 if due.is_empty() {
 
-
                     if initial_sync_only && first_flush_done {
                         let _ = app_flush.emit("sync://done", serde_json::json!({
                             "sync_id": &sync_id_flush,
                             "sync_label": &label_flush,
                         }));
-
 
                         pause_flag_flush.store(true, Ordering::Relaxed);
                     }
@@ -293,7 +283,6 @@ impl WatcherRegistry {
                         continue;
                     }
                 }
-
 
                 let (current_rule, current_dry_run, current_sync_deletes) = entries_flush
                     .lock()
@@ -328,7 +317,6 @@ impl WatcherRegistry {
                         .replace('\\', "/");
                     let remote = format!("{remote_root_flush}/{rel}");
 
-
                     if is_protected(&remote, &remote_root_flush, &protected_matcher) {
                         let _ = app_flush.emit("sync://event", SyncEvent {
                             sync_id: sync_id_flush.clone(),
@@ -339,7 +327,6 @@ impl WatcherRegistry {
                         });
                         continue;
                     }
-
 
                     if matches!(op, PendingOp::Upsert) {
                         if let Some(max_kb) = max_file_size_kb {
@@ -363,7 +350,6 @@ impl WatcherRegistry {
                         }
                     }
 
-
                     if matches!(op, PendingOp::Delete) && !current_sync_deletes {
                         let _ = app_flush.emit("sync://event", SyncEvent {
                             sync_id: sync_id_flush.clone(),
@@ -374,7 +360,6 @@ impl WatcherRegistry {
                         });
                         continue;
                     }
-
 
                     if current_dry_run {
                         let kind_str = match op {
@@ -584,7 +569,7 @@ fn push_file_via_sftp(
     remote: &str,
     strip: bool,
     preserve_ts: bool,
-    mirror_perms: bool,
+    _mirror_perms: bool,
 ) -> PylonResult<()> {
     use std::io::Write;
 
@@ -601,7 +586,6 @@ fn push_file_via_sftp(
     } else {
         raw
     };
-
 
     if let Some(parent) = Path::new(remote).parent() {
         let parent_str = parent.to_string_lossy();
@@ -696,7 +680,6 @@ fn is_ignored(path: &Path, matcher: &IgnoreMatcher) -> bool {
     }
 }
 
-
 fn build_protected_matcher(remote_root: &str, patterns: &[String]) -> IgnoreMatcher {
     if patterns.is_empty() { return None; }
     let mut builder = ignore::gitignore::GitignoreBuilder::new(remote_root);
@@ -706,13 +689,11 @@ fn build_protected_matcher(remote_root: &str, patterns: &[String]) -> IgnoreMatc
     builder.build().ok()
 }
 
-
 fn is_protected(remote_abs: &str, remote_root: &str, matcher: &IgnoreMatcher) -> bool {
     let m = match matcher {
         Some(m) => m,
         None => return false,
     };
-
 
     let rel = remote_abs
         .strip_prefix(remote_root)

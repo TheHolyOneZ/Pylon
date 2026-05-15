@@ -29,7 +29,6 @@ export function TerminalPane() {
   const [renamingTab, setRenamingTab] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
 
-
   const termRefs = useRef<Map<string, TermRef>>(new Map());
 
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -44,7 +43,6 @@ export function TerminalPane() {
     if (el) containerRefs.current.set(tabId, el);
     else containerRefs.current.delete(tabId);
   }, []);
-
 
   const visibleTabs = tabs.filter((t) => t.sessionId === activeSessionId);
   const activeTabId = activeSessionId ? (activeTabBySession[activeSessionId] ?? null) : null;
@@ -117,7 +115,6 @@ export function TerminalPane() {
     if (text) navigator.clipboard.writeText(text).catch(() => {});
   }
 
-
   useEffect(() => {
     if (!activeTab) return;
     const container = containerRefs.current.get(activeTab.id);
@@ -181,7 +178,6 @@ export function TerminalPane() {
     termRefs.current.set(activeTab.terminalId, { terminal, fit, observer });
   }, [activeTabId, activeTab, visibleTabs.length]);
 
-
   useEffect(() => {
     const unlisten = listen<{ terminal_id: string; data: number[] }>(
       "terminal://output",
@@ -207,12 +203,10 @@ export function TerminalPane() {
     });
   }, [settings.termScrollback]);
 
-
   useEffect(() => {
     if (!remoteTerminalCwd || !activeTab) return;
     api.terminalInput(activeTab.terminalId, Array.from(new TextEncoder().encode(`cd ${remoteTerminalCwd}\r`)));
   }, [remoteTerminalCwd]);
-
 
   useEffect(() => {
     setFontSize(settings.termFontSize);
@@ -223,7 +217,6 @@ export function TerminalPane() {
     });
   }, [settings.termFontSize, settings.termFontFamily]);
 
-
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (e.ctrlKey && e.shiftKey && e.key === "T") { e.preventDefault(); openNewTab(); }
@@ -231,7 +224,6 @@ export function TerminalPane() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [activeSessionId, visibleTabs.length]);
-
 
   useEffect(() => {
     return () => {

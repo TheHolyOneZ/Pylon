@@ -62,7 +62,6 @@ export function CommandPalette({ open, onClose }: Props) {
     if (e.key === "Escape") onClose();
   }
 
-
   const groups = Array.from(new Set(filtered.map((a) => a.group)));
 
   return (

@@ -45,7 +45,6 @@ export function Sidebar() {
   const hasLock = hasLockPassword();
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; server: SavedServer } | null>(null);
 
-
   const sortedServers = [...servers].sort((a, b) => {
     if (a.lastConnected && b.lastConnected) return b.lastConnected.localeCompare(a.lastConnected);
     if (a.lastConnected) return -1;

@@ -1,6 +1,5 @@
 
 
-
 use std::io::Cursor;
 use std::path::Path;
 
@@ -24,7 +23,6 @@ pub struct MetadataField {
     pub value: String,
 }
 
-
 pub fn strip_bytes(data: &[u8], path: &Path) -> PylonResult<Vec<u8>> {
     let ext = path
         .extension()
@@ -41,7 +39,6 @@ pub fn strip_bytes(data: &[u8], path: &Path) -> PylonResult<Vec<u8>> {
         _ => Ok(data.to_vec()),
     }
 }
-
 
 pub fn strip_bytes_with_report(data: &[u8], path: &Path) -> PylonResult<(Vec<u8>, MetadataReport)> {
     let ext = path
@@ -64,7 +61,6 @@ pub fn strip_bytes_with_report(data: &[u8], path: &Path) -> PylonResult<(Vec<u8>
     };
     Ok((clean, report))
 }
-
 
 pub fn read_fields(data: &[u8], path: &Path) -> PylonResult<Vec<MetadataField>> {
     let ext = path

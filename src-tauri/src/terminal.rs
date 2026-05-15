@@ -1,6 +1,5 @@
 
 
-
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -63,12 +62,12 @@ impl TerminalRegistry {
         let addr = format!("{}:{}", auth.host, auth.port);
         let tcp = TcpStream::connect(&addr)
             .map_err(|e| PylonError::Terminal(format!("TCP: {e}")))?;
-        tcp.set_read_timeout(Some(std::time::Duration::from_millis(50)))?;
 
         let mut sess = Session::new().map_err(|e| PylonError::Terminal(e.to_string()))?;
+        sess.set_blocking(true);
+        sess.set_timeout(30_000);
         sess.set_tcp_stream(tcp);
         sess.handshake().map_err(|e| PylonError::Terminal(format!("Handshake: {e}")))?;
-
 
         if let Some(ref key_pem) = auth.private_key {
             let tmp = tempfile_from_pem(key_pem)?;
@@ -98,7 +97,6 @@ impl TerminalRegistry {
             ch.shell()
                 .map_err(|e| PylonError::Terminal(format!("shell: {e}")))?;
         }
-
 
         sess.set_blocking(false);
 
@@ -147,7 +145,6 @@ impl TerminalRegistry {
     }
 }
 
-
 fn pump_terminal(
     app: AppHandle,
     _sess: Session,
@@ -170,7 +167,6 @@ fn pump_terminal(
             }
         }
 
-
         match ch.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
@@ -180,7 +176,6 @@ fn pump_terminal(
                 );
             }
             Err(e) => {
-
 
                 let kind = e.kind();
                 if kind == std::io::ErrorKind::WouldBlock || kind == std::io::ErrorKind::TimedOut {

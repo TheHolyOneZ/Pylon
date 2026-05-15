@@ -43,7 +43,6 @@ pub struct ConnectionInfo {
     pub from_vault: bool,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HostKeyVerification {
     pub status: String,
@@ -53,7 +52,6 @@ pub struct HostKeyVerification {
     pub host: String,
     pub port: u16,
 }
-
 
 #[derive(Clone)]
 pub struct TermAuthParams {
@@ -154,7 +152,6 @@ impl SessionRegistry {
     }
 }
 
-
 pub enum OpenSessionResult {
 
     Ready(Session, ConnectionInfo),
@@ -163,7 +160,6 @@ pub enum OpenSessionResult {
 
     HostKeyChanged(HostKeyVerification),
 }
-
 
 pub fn open_session(
     host: &str,
@@ -176,13 +172,12 @@ pub fn open_session(
     let addr = format!("{host}:{port}");
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| PylonError::Ssh(format!("TCP connect to {addr}: {e}")))?;
-    tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
 
     let mut sess = Session::new().map_err(|e| PylonError::Ssh(e.to_string()))?;
+    sess.set_blocking(true);
+    sess.set_timeout(30_000);
     sess.set_tcp_stream(tcp);
     sess.handshake().map_err(|e| PylonError::Ssh(format!("Handshake: {e}")))?;
-
 
     let (key_type_str, key_bytes, fingerprint) = {
         let (key_bytes, key_type) = sess
@@ -200,7 +195,6 @@ pub fn open_session(
         let fp = known_hosts::sha256_fingerprint(key_bytes);
         (type_str.to_string(), key_bytes.to_vec(), fp)
     };
-
 
     match known_hosts::check_host_key(host, port, &key_bytes, &key_type_str)? {
         HostKeyStatus::Known => {}
@@ -232,7 +226,6 @@ pub fn open_session(
     authenticate_session(sess, host, port, username, password, private_key, label, fingerprint, key_type_str)
         .map(|(s, info)| OpenSessionResult::Ready(s, info))
 }
-
 
 pub fn authenticate_and_build(
     sess: Session,
@@ -282,7 +275,6 @@ fn authenticate_session(
         return Err(PylonError::Ssh("Authentication failed".into()));
     }
 
-
     sess.set_keepalive(true, 30);
 
     let info = ConnectionInfo {
@@ -331,15 +323,14 @@ pub fn spawn_keepalive(
     });
 }
 
-
 pub fn open_transfer_session(auth: &TermAuthParams) -> PylonResult<Arc<Mutex<Session>>> {
     let addr = format!("{}:{}", auth.host, auth.port);
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| PylonError::Ssh(format!("Worker TCP connect {addr}: {e}")))?;
-    tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
 
     let mut sess = Session::new().map_err(|e| PylonError::Ssh(e.to_string()))?;
+    sess.set_blocking(true);
+    sess.set_timeout(30_000);
     sess.set_tcp_stream(tcp);
     sess.handshake().map_err(|e| PylonError::Ssh(format!("Worker handshake: {e}")))?;
 

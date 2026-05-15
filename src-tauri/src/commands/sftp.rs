@@ -57,7 +57,6 @@ pub async fn delete_remote(
     }
 }
 
-
 #[tauri::command]
 pub async fn delete_batch(
     registry: State<'_, SessionRegistry>,

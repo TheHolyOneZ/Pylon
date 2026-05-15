@@ -1,6 +1,5 @@
 
 
-
 use std::{
     io::{Read, Write},
     path::Path,
@@ -41,7 +40,6 @@ pub fn list_dir(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<Vec<Re
         let name = pb.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let full_path = pb.to_string_lossy().into_owned();
         let is_symlink = stat.file_type().is_symlink();
-
 
         let symlink_target = if is_symlink {
             sftp.readlink(Path::new(&full_path))
@@ -122,7 +120,6 @@ pub fn delete_dir(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> 
     sftp.rmdir(Path::new(path)).map_err(|e| PylonError::Sftp(format!("rmdir {path}: {e}")))
 }
 
-
 pub fn recursive_delete(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> {
     let entries = list_dir(session, path)?;
     for entry in entries {
@@ -140,7 +137,6 @@ pub fn mkdir(session: &Arc<Mutex<Session>>, path: &str, mode: i32) -> PylonResul
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
     sftp.mkdir(Path::new(path), mode).map_err(|e| PylonError::Sftp(format!("mkdir {path}: {e}")))
 }
-
 
 pub fn mkdir_p(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<()> {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -182,7 +178,6 @@ pub fn write_file(session: &Arc<Mutex<Session>>, path: &str, data: &[u8]) -> Pyl
     Ok(())
 }
 
-
 pub fn chmod(session: &Arc<Mutex<Session>>, path: &str, mode: u32) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -197,7 +192,6 @@ pub fn chmod(session: &Arc<Mutex<Session>>, path: &str, mode: u32) -> PylonResul
     sftp.setstat(Path::new(path), stat)
         .map_err(|e| PylonError::Sftp(format!("chmod {path} {:o}: {e}", mode)))
 }
-
 
 pub fn chown(session: &Arc<Mutex<Session>>, path: &str, uid: u32, gid: u32) -> PylonResult<()> {
     let sess = session.lock().unwrap();
@@ -214,7 +208,6 @@ pub fn chown(session: &Arc<Mutex<Session>>, path: &str, uid: u32, gid: u32) -> P
         .map_err(|e| PylonError::Sftp(format!("chown {path} {uid}:{gid}: {e}")))
 }
 
-
 pub fn set_times(session: &Arc<Mutex<Session>>, path: &str, atime: u64, mtime: u64) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -230,14 +223,12 @@ pub fn set_times(session: &Arc<Mutex<Session>>, path: &str, atime: u64, mtime: u
         .map_err(|e| PylonError::Sftp(format!("utimes {path}: {e}")))
 }
 
-
 pub fn create_symlink(session: &Arc<Mutex<Session>>, target: &str, linkname: &str) -> PylonResult<()> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
     sftp.symlink(Path::new(target), Path::new(linkname))
         .map_err(|e| PylonError::Sftp(format!("symlink {target} -> {linkname}: {e}")))
 }
-
 
 pub fn readlink(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String> {
     let sess = session.lock().unwrap();
@@ -247,7 +238,6 @@ pub fn readlink(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String
         .map_err(|e| PylonError::Sftp(format!("readlink {path}: {e}")))
 }
 
-
 pub fn realpath(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String> {
     let sess = session.lock().unwrap();
     let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
@@ -255,7 +245,6 @@ pub fn realpath(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<String
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| PylonError::Sftp(format!("realpath {path}: {e}")))
 }
-
 
 pub fn recursive_list(session: &Arc<Mutex<Session>>, path: &str) -> PylonResult<Vec<RemoteEntry>> {
     let mut result = Vec::new();

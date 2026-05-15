@@ -1,6 +1,5 @@
 
 
-
 let _sep = "/";
 let _platform = "linux";
 
@@ -17,7 +16,6 @@ export async function initPlatform() {
 export function getSep() { return _sep; }
 export function getPlatformCached() { return _platform; }
 
-
 export function joinPath(...parts: string[]): string {
   if (_platform === "windows") {
 
@@ -26,7 +24,6 @@ export function joinPath(...parts: string[]): string {
   }
   return parts.join("/").replace(/\/+/g, "/") || "/";
 }
-
 
 export function dirname(p: string): string {
   if (_platform === "windows") {
@@ -41,12 +38,10 @@ export function dirname(p: string): string {
   return p.slice(0, last);
 }
 
-
 export function basename(p: string): string {
   const norm = p.replace(/\\/g, "/");
   return norm.split("/").filter(Boolean).pop() ?? p;
 }
-
 
 export function normalizeSeparators(p: string): string {
   return p.replace(/\\/g, "/");

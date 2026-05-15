@@ -13,9 +13,7 @@ export function StatusBar() {
   const runningTransfers = transfers.filter((t) => t.state === "running");
   const stripping = runningTransfers.filter((t) => t.strip_metadata);
 
-
   const totalBps = Object.values(speedBps).reduce((a, b) => a + b, 0);
-
 
   const avgPct = runningTransfers.length > 0
     ? runningTransfers.reduce((acc, t) => {

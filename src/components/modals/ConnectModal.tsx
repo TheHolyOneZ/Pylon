@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Info, KeyRound, Server, X, Zap } from "lucid
 import { open } from "@tauri-apps/plugin-dialog";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUiStore } from "../../stores/uiStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useServerStore } from "../../stores/serverStore";
 import { toast } from "../../stores/toastStore";
 import * as api from "../../lib/tauri";
@@ -18,6 +19,7 @@ const INPUT = "w-full bg-void-900 border border-void-500 rounded-lg px-3 py-2 te
 export function ConnectModal() {
   const { setConnectModal, connectPrefill } = useUiStore();
   const { connectToServer } = useConnectionStore();
+  const hostKeyPolicy = useSettingsStore((s) => s.hostKeyPolicy);
   const { save: saveServer } = useServerStore();
 
   const [host, setHost] = useState(connectPrefill?.host ?? "");
@@ -40,7 +42,6 @@ export function ConnectModal() {
   const [pendingHostKey, setPendingHostKey] = useState<null | {
     host: string; port: number; fingerprint: string; keyType: string; changed: boolean;
   }>(null);
-
 
   const [configHosts, setConfigHosts] = useState<SshConfigHost[]>([]);
   const [showConfigPicker, setShowConfigPicker] = useState(false);
@@ -169,7 +170,6 @@ export function ConnectModal() {
       setConnecting(false);
     }
   }
-
 
   if (pendingHostKey) {
     return (
@@ -357,7 +357,7 @@ export function ConnectModal() {
                 >
                   <div className="pt-3 space-y-3 text-xs text-slate-500 bg-void-900/50 rounded-lg px-3 py-3 mt-2">
                     <p>Keep-alive interval: <span className="text-slate-300">25s</span></p>
-                    <p>Host key policy: <span className="text-slate-300">Ask (known_hosts)</span></p>
+                    <p>Host key policy: <span className="text-slate-300">{hostKeyPolicy === "auto-accept" ? "Auto-Accept" : hostKeyPolicy === "strict" ? "Strict" : "Ask"}</span></p>
                     <p>Chunk size: <span className="text-slate-300">512 KiB</span></p>
                     <div className="flex items-center gap-2">
                       <span>Auto-disconnect:</span>

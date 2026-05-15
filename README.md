@@ -2,7 +2,7 @@
 
 Cross-platform SSH and SFTP desktop client built with [Tauri v2](https://tauri.app), Rust, and React.
 
-**License:** GPL-3.0 | **Version:** 0.1.0 (beta) | **Platforms:** Windows, macOS, Linux
+**License:** GPL-3.0 | **Version:** 0.2.0 (beta) | **Platforms:** Windows, macOS, Linux
 
 > Pylon is in beta. The vault format and configuration schema may change between pre-release versions. Back up your vault before upgrading.
 
@@ -106,7 +106,7 @@ Enable globally in Settings → Security, or trigger per-file from the context m
 ### Security
 
 - SSH host key verification against `~/.ssh/known_hosts` on every connection
-- Changed host keys show a blocking warning dialog (configurable policy: ask / auto-accept / strict)
+- Host key policy (Settings → Security) applies to both Quick Connect and ZVault: ask / auto-accept / strict
 - SSH keepalive prevents silent session drops
 - No telemetry; no outbound connections beyond what you explicitly initiate
 - Tauri CSP configured in `src-tauri/capabilities/default.json`
@@ -129,6 +129,15 @@ Enable globally in Settings → Security, or trigger per-file from the context m
 | Rust | stable ≥ 1.77 |
 | Node.js | ≥ 20 LTS |
 | pnpm | ≥ 9 |
+
+**Windows** — Strawberry Perl is required for the vendored OpenSSL build step:
+
+1. Download [Strawberry Perl portable](https://strawberryperl.com/) and extract to `C:\strawberry-perl`
+2. Add the following to your **system** PATH (Settings → System → Advanced system settings → Environment Variables → Path):
+   - `C:\strawberry-perl\perl\bin`
+   - `C:\strawberry-perl\c\bin`
+
+Without Perl, `cargo build` will fail with `Command 'perl' not found` during the `openssl-sys` compilation step.
 
 **Linux** — install WebKit2GTK and related system libraries:
 

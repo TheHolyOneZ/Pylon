@@ -1,6 +1,6 @@
 [package]
 name = "pylon"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["TheHolyOneZ"]
 license = "GPL-3.0"
@@ -24,8 +24,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 
 # SSH / SFTP
-ssh2 = { version = "0.9", features = ["vendored-openssl"] }
-# Force vendored OpenSSL for all platforms — required for macOS cross-compilation
+ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
 openssl = { version = "0.10", features = ["vendored"] }
 # Async runtime
 tokio = { version = "1", features = ["full"] }

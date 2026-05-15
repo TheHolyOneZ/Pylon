@@ -23,7 +23,6 @@ use crate::{
 
 pub const CHUNK_SIZE: usize = 512 * 1024;
 
-
 fn sftp_rich_error(op: &str, path: &str, raw: &str) -> String {
 
     let code_hint = if raw.contains("SFTP(2)") {
@@ -49,7 +48,6 @@ fn sftp_rich_error(op: &str, path: &str, raw: &str) -> String {
 fn effective_chunk(chunk_kb: Option<u64>) -> usize {
     chunk_kb.map(|kb| (kb as usize).max(16) * 1024).unwrap_or(CHUNK_SIZE)
 }
-
 
 const RUNNING: u8 = 0;
 const PAUSED: u8 = 1;
@@ -276,7 +274,6 @@ fn unique_tmp_path(final_path: &str) -> String {
     }
 }
 
-
 pub fn upload(
     app: &AppHandle,
     session: &Arc<Mutex<ssh2::Session>>,
@@ -366,7 +363,6 @@ pub fn upload(
         let sess = session.lock().map_err(|_| PylonError::Transfer("Session lock poisoned".into()))?;
         let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
 
-
         if let Some(parent) = Path::new(&remote_path).parent() {
             let parent_str = parent.to_string_lossy();
             if !parent_str.is_empty() && parent_str != "/" {
@@ -394,10 +390,8 @@ pub fn upload(
             }
         }
 
-
         let mut actual_offset = resume_offset;
         let mut remote_file = if resume_offset > 0 {
-
 
             match sftp.open_mode(
                 Path::new(&tmp_remote),
@@ -408,7 +402,6 @@ pub fn upload(
                 Ok(f) => f,
                 Err(e) => {
                     let msg = e.to_string();
-
 
                     if msg.contains("SFTP(2)") || msg.contains("no such file") || msg.contains("No such file") {
                         tracing::warn!(
@@ -487,7 +480,6 @@ pub fn upload(
                 if let Ok(sess) = session.lock() {
                     if let Ok(sftp) = sess.sftp() {
 
-
                         let _ = sftp.unlink(Path::new(&remote_path));
                         sftp.rename(
                             Path::new(&tmp_remote),
@@ -516,7 +508,6 @@ pub fn upload(
                 }
                 Err(e) => {
 
-
                     cleanup_remote_temp(session, &tmp_remote);
                     let msg = e.to_string();
                     registry.finish(&id, None, Some(msg.clone()));
@@ -543,7 +534,6 @@ pub fn upload(
     }
 }
 
-
 fn cleanup_remote_temp(session: &Arc<Mutex<ssh2::Session>>, tmp_path: &str) {
     if let Ok(sess) = session.lock() {
         if let Ok(sftp) = sess.sftp() {
@@ -551,7 +541,6 @@ fn cleanup_remote_temp(session: &Arc<Mutex<ssh2::Session>>, tmp_path: &str) {
         }
     }
 }
-
 
 pub fn download(
     app: &AppHandle,

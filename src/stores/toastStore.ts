@@ -37,7 +37,6 @@ export const useToastStore = create<ToastStore>((set) => ({
   dismissAll: () => set({ toasts: [] }),
 }));
 
-
 export const toast = {
   success: (title: string, message?: string) =>
     useToastStore.getState().push({ type: "success", title, message, duration: 3500 }),

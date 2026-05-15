@@ -12,7 +12,6 @@ interface Props {
 export function TransferDrawer({ open, onClose }: Props) {
   const { transfers, progress, speedBps, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer } = useTransferStore();
 
-
   const visible = transfers.filter((t) =>
     t.state !== "cancelled"
   );

@@ -11,7 +11,6 @@ use crate::{
     watcher_store::{PersistedWatcherConfig, SuspendedWatcherRegistry},
 };
 
-
 #[tauri::command]
 pub async fn vault_list_profiles(manager: State<'_, VaultManager>) -> Result<Vec<VaultProfile>, PylonError> {
     Ok(manager.list_profiles())
@@ -58,7 +57,6 @@ pub async fn vault_rename_profile(
 ) -> Result<(), PylonError> {
     manager.rename_profile(&profile_id, name, color, icon)
 }
-
 
 #[tauri::command]
 pub async fn vault_unlock(
@@ -150,6 +148,74 @@ pub async fn vault_delete_credential(
     manager.delete_credential(&passphrase, &id)
 }
 
+#[tauri::command]
+pub async fn vault_accept_host_key_and_connect(
+    app: tauri::AppHandle,
+    manager: State<'_, VaultManager>,
+    registry: State<'_, SessionRegistry>,
+    watcher_registry: State<'_, WatcherRegistry>,
+    suspended_registry: State<'_, SuspendedWatcherRegistry>,
+    credential_id: String,
+    permanent: bool,
+) -> Result<session::ConnectionInfo, PylonError> {
+    let cred = manager.get_credential_with_secret(&credential_id)?;
+    let password = cred.password.as_deref();
+    let private_key = cred.private_key.as_deref();
+
+    let addr = format!("{}:{}", cred.host, cred.port);
+    let tcp = std::net::TcpStream::connect(&addr)
+        .map_err(|e| PylonError::Ssh(format!("TCP connect to {addr}: {e}")))?;
+
+    let mut temp_sess = ssh2::Session::new().map_err(|e| PylonError::Ssh(e.to_string()))?;
+    temp_sess.set_blocking(true);
+    temp_sess.set_timeout(30_000);
+    temp_sess.set_tcp_stream(tcp);
+    temp_sess.handshake().map_err(|e| PylonError::Ssh(format!("Handshake: {e}")))?;
+
+    let (key_bytes, key_type) = temp_sess
+        .host_key()
+        .ok_or_else(|| PylonError::Ssh("Server provided no host key".into()))?;
+    let key_type_str = match key_type {
+        ssh2::HostKeyType::Rsa => "ssh-rsa",
+        ssh2::HostKeyType::Dss => "ssh-dss",
+        ssh2::HostKeyType::Ecdsa256 => "ecdsa-sha2-nistp256",
+        ssh2::HostKeyType::Ecdsa384 => "ecdsa-sha2-nistp384",
+        ssh2::HostKeyType::Ecdsa521 => "ecdsa-sha2-nistp521",
+        ssh2::HostKeyType::Ed25519 => "ssh-ed25519",
+        _ => "unknown",
+    };
+    let fingerprint = known_hosts::sha256_fingerprint(key_bytes);
+    let key_bytes_owned = key_bytes.to_vec();
+
+    if permanent {
+        known_hosts::add_host_key(&cred.host, cred.port, &key_bytes_owned, key_type_str)?;
+    }
+
+    let (sess, mut info) = session::authenticate_and_build(
+        temp_sess, &cred.host, cred.port, &cred.username,
+        password, private_key,
+        &cred.label, fingerprint, key_type_str.to_string(),
+    )?;
+
+    info.from_vault = true;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let sess_arc = Arc::new(std::sync::Mutex::new(sess));
+    session::spawn_keepalive(sess_arc.clone(), cancel.clone(), app.clone(), info.id.clone());
+    let term_auth = TermAuthParams {
+        host: cred.host.clone(),
+        port: cred.port,
+        username: cred.username.clone(),
+        password: cred.password.clone(),
+        private_key: cred.private_key.clone(),
+    };
+    let session_id = info.id.clone();
+    let live = LiveSession { info: info.clone(), session: sess_arc.clone(), keepalive_cancel: cancel, term_auth };
+    registry.add(live);
+    registry.set_credential_id(&session_id, &credential_id);
+    resume_suspended_watchers(&app, &session_id, &credential_id, &sess_arc, &suspended_registry, &watcher_registry);
+    Ok(info)
+}
+
 fn resume_suspended_watchers(
     app: &tauri::AppHandle,
     session_id: &str,
@@ -215,7 +281,6 @@ fn resume_suspended_watchers(
     }
 }
 
-
 #[tauri::command]
 pub async fn vault_connect(
     app: tauri::AppHandle,
@@ -226,7 +291,6 @@ pub async fn vault_connect(
     credential_id: String,
 ) -> Result<serde_json::Value, PylonError> {
     let cred = manager.get_credential_with_secret(&credential_id)?;
-
 
     match &cred.auth_type {
         crate::vault::AuthType::Password if cred.password.is_none() => {

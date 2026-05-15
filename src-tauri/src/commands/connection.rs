@@ -47,7 +47,6 @@ pub async fn connect(
         }
         OpenSessionResult::NeedsHostKeyConfirmation(verification, _sess) => {
 
-
             let _ = app.emit("ssh://host-key-verify", &verification);
             Ok(serde_json::json!({ "status": "host_key_unknown", "verification": verification }))
         }
@@ -57,7 +56,6 @@ pub async fn connect(
         }
     }
 }
-
 
 #[tauri::command]
 pub async fn accept_host_key_and_connect(
@@ -77,6 +75,8 @@ pub async fn accept_host_key_and_connect(
         .map_err(|e| PylonError::Ssh(format!("TCP connect to {addr}: {e}")))?;
 
     let mut temp_sess = ssh2::Session::new().map_err(|e| PylonError::Ssh(e.to_string()))?;
+    temp_sess.set_blocking(true);
+    temp_sess.set_timeout(30_000);
     temp_sess.set_tcp_stream(tcp);
     temp_sess.handshake().map_err(|e| PylonError::Ssh(format!("Handshake: {e}")))?;
 
