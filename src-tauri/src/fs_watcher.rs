@@ -569,9 +569,11 @@ fn push_file_via_sftp(
     remote: &str,
     strip: bool,
     preserve_ts: bool,
-    _mirror_perms: bool,
+    mirror_perms: bool,
 ) -> PylonResult<()> {
     use std::io::Write;
+    #[cfg(not(unix))]
+    let _ = mirror_perms;
 
     let local_meta = std::fs::metadata(local)?;
     let raw = std::fs::read(local)?;
