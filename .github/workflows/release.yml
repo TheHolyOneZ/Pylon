@@ -65,6 +65,16 @@ jobs:
             exit 1
           fi
 
+      
+      - name: Strawberry Perl for OpenSSL
+        if: runner.os == 'Windows'
+        run: |
+          perl_exe="C:/Strawberry/perl/bin/perl.exe"
+          if [ ! -f "$perl_exe" ]; then echo "::error::Strawberry Perl not found at $perl_exe"; exit 1; fi
+          "$perl_exe" -MLocale::Maketext::Simple -MIPC::Cmd -e 'print "perl ok\n"'
+          echo "OPENSSL_SRC_PERL=$perl_exe" >> "$GITHUB_ENV"
+          echo "PERL=$perl_exe" >> "$GITHUB_ENV"
+
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
