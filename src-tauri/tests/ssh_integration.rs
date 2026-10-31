@@ -58,12 +58,16 @@ fn sftp_operations() {
     sftp::write_file(&conn, &format!("{base}/a/g.txt"), b"x").unwrap();
     let e = sftp::rename(&conn, &format!("{base}/a/g.txt"), &format!("{base}/a/b/f.txt")).unwrap_err();
     assert!(e.to_string().contains("already exists"));
-    std::os::unix::fs::symlink("/usr", format!("{base}/a/link")).unwrap();
-    let list = sftp::list_dir(&conn, &format!("{base}/a")).unwrap();
-    let link = list.iter().find(|e| e.name == "link").unwrap();
-    assert!(link.is_symlink && link.is_dir);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/usr", format!("{base}/a/link")).unwrap();
+        let list = sftp::list_dir(&conn, &format!("{base}/a")).unwrap();
+        let link = list.iter().find(|e| e.name == "link").unwrap();
+        assert!(link.is_symlink && link.is_dir);
+    }
     sftp::recursive_delete(&conn, &base).unwrap();
     assert!(!std::path::Path::new(&base).exists());
+    #[cfg(unix)]
     assert!(std::path::Path::new("/usr/bin").exists());
     let e = sftp::list_dir(&conn, "/definitely/not/here").unwrap_err().to_string();
     assert!(e.contains("no such file"), "{e}");
