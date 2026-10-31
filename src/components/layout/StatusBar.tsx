@@ -1,81 +1,65 @@
-import { Activity, Shield, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeftRight, KeyRound, Lock, RefreshCw } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
-import { useTransferStore } from "../../stores/transferStore";
+import { useTransferStore, isActive } from "../../stores/transferStore";
+import { useSyncStore } from "../../stores/syncStore";
 import { useUiStore } from "../../stores/uiStore";
-import { formatBytes, formatSpeed } from "../../lib/format";
+import { formatSpeed } from "../../lib/format";
 
 export function StatusBar() {
-  const { connections, activeSessionId } = useConnectionStore();
+  const { connections, activeSessionId, vaultUnlocked } = useConnectionStore();
   const { transfers, speedBps } = useTransferStore();
-  const { toggleTransferDrawer } = useUiStore();
+  const syncs = useSyncStore((s) => s.syncs);
+  const { setTransferDrawer, setActiveTab, setVaultModal } = useUiStore();
 
-  const activeConn = connections.find((c) => c.id === activeSessionId);
-  const runningTransfers = transfers.filter((t) => t.state === "running");
-  const stripping = runningTransfers.filter((t) => t.strip_metadata);
-
-  const totalBps = Object.values(speedBps).reduce((a, b) => a + b, 0);
-
-  const avgPct = runningTransfers.length > 0
-    ? runningTransfers.reduce((acc, t) => {
-        const pct = t.total_bytes > 0 ? (t.transferred_bytes / t.total_bytes) * 100 : 0;
-        return acc + pct;
-      }, 0) / runningTransfers.length
-    : 0;
+  const conn = connections.find((c) => c.id === activeSessionId);
+  const active = transfers.filter((t) => isActive(t.state));
+  const totalBytes = active.reduce((a, t) => a + (t.total_bytes || 0), 0);
+  const doneBytes = active.reduce((a, t) => a + (t.transferred_bytes || 0), 0);
+  const pct = totalBytes > 0 ? (doneBytes / totalBytes) * 100 : 0;
+  const bps = active.reduce((a, t) => a + (speedBps[t.id] ?? 0), 0);
+  const watching = syncs.filter((s) => s.active).length;
 
   return (
-    <div className="relative flex items-center h-6 bg-void-900 border-t border-void-600 px-4 text-xs text-slate-500 gap-5 shrink-0 select-none">
-      {}
-      <div className="flex items-center gap-1.5">
-        {activeConn ? (
-          <>
-            <Wifi size={11} className="text-pylon-green" />
-            <span className="text-slate-400">{activeConn.host}</span>
-            <span className="text-slate-600">·</span>
-            <span>↑ {formatBytes(activeConn.bytes_sent)}</span>
-            <span>↓ {formatBytes(activeConn.bytes_received)}</span>
-          </>
-        ) : (
-          <>
-            <WifiOff size={11} />
-            <span>Not connected</span>
-          </>
-        )}
-      </div>
-
-      {}
-      {runningTransfers.length > 0 && (
-        <button
-          onClick={toggleTransferDrawer}
-          className="flex items-center gap-1.5 hover:text-slate-300 transition-colors"
-          title="Open transfer drawer"
-        >
-          <Activity size={11} className="text-pylon-cyan" />
-          <span className="text-pylon-cyan">{formatSpeed(totalBps)}</span>
-          <span>{runningTransfers.length} transfer{runningTransfers.length > 1 ? "s" : ""}</span>
-        </button>
-      )}
-
-      {}
-      {stripping.length > 0 && (
-        <div className="flex items-center gap-1">
-          <Shield size={10} className="text-pylon-amber" />
-          <span className="text-pylon-amber">{stripping.length} stripping</span>
+    <div className="relative flex h-7 shrink-0 select-none items-center gap-4 border-t border-void-600 bg-void-900 px-3 text-[11.5px] text-slate-500">
+      {conn ? (
+        <div className="flex min-w-0 items-center gap-2" title={conn.server_fingerprint ?? undefined}>
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeof conn.state === "object" ? "bg-pylon-red" : "bg-pylon-green"}`} />
+          <span className="truncate text-slate-300">{conn.username}@{conn.host}{conn.port !== 22 ? `:${conn.port}` : ""}</span>
+          {conn.server_key_type && <span className="hidden truncate md:inline">{conn.server_key_type}</span>}
+          {conn.server_version && <span className="hidden truncate lg:inline">{conn.server_version.replace(/^SSH-2\.0-/, "")}</span>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full border border-slate-600" />
+          Not connected
         </div>
       )}
 
       <div className="flex-1" />
 
-      {}
-      {activeConn?.server_key_type && (
-        <span className="text-slate-600">{activeConn.server_key_type}</span>
+      {active.length > 0 && (
+        <button onClick={() => setTransferDrawer(true)} className="flex items-center gap-2 rounded px-1.5 py-0.5 hover:bg-void-700 hover:text-slate-200" title="Show transfers">
+          <ArrowLeftRight size={12} className="text-pylon-cyan" />
+          <span className="text-slate-300">{active.length} transfer{active.length > 1 ? "s" : ""}</span>
+          <span className="tabular">{pct.toFixed(0)}%</span>
+          {bps > 0 && <span className="tabular text-pylon-cyan">{formatSpeed(bps)}</span>}
+        </button>
       )}
+      {watching > 0 && (
+        <button onClick={() => setActiveTab("sync")} className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-void-700 hover:text-slate-200" title="Sync watchers">
+          <RefreshCw size={11} />
+          {watching} watching
+        </button>
+      )}
+      <button onClick={() => setVaultModal(true)} className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-void-700 hover:text-slate-200" title="ZVault">
+        {vaultUnlocked ? <KeyRound size={11} className="text-pylon-amber" /> : <Lock size={11} />}
+        {vaultUnlocked ? "Vault unlocked" : "Vault locked"}
+      </button>
 
-      {}
-      {runningTransfers.length > 0 && (
-        <div
-          className="absolute bottom-0 left-0 h-0.5 bg-pylon-cyan/60 transition-all duration-300"
-          style={{ width: `${avgPct}%` }}
-        />
+      {active.length > 0 && (
+        <div className="absolute inset-x-0 -top-px h-px bg-void-600">
+          <div className="h-full bg-pylon-cyan transition-[width] duration-300" style={{ width: `${pct}%` }} />
+        </div>
       )}
     </div>
   );

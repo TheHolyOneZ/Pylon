@@ -65,6 +65,38 @@ pub struct PersistedWatcherConfig {
     pub initial_sync_only: bool,
 }
 
+impl PersistedWatcherConfig {
+    pub fn to_sync_config(&self, session_id: &str) -> SyncConfig {
+        SyncConfig {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            local_root: self.local_root.clone(),
+            remote_root: self.remote_root.clone(),
+            session_id: session_id.to_string(),
+            strip_metadata: self.strip_metadata,
+            active: true,
+            events_processed: 0,
+            bytes_synced: 0,
+            exclude_patterns: self.exclude_patterns.clone(),
+            preserve_timestamps: self.preserve_timestamps,
+            mirror_permissions: self.mirror_permissions,
+            rule: self.rule.clone(),
+            from_vault: true,
+            expected_host: self.expected_host.clone(),
+            expected_port: self.expected_port,
+            keep_on_disconnect: self.keep_on_disconnect,
+            credential_id: self.credential_id.clone(),
+            expected_fingerprint: self.expected_fingerprint.clone(),
+            protected_patterns: self.protected_patterns.clone(),
+            dry_run: self.dry_run,
+            max_file_size_kb: self.max_file_size_kb,
+            sync_deletes: self.sync_deletes,
+            initial_sync_only: self.initial_sync_only,
+            waiting_for_session: false,
+        }
+    }
+}
+
 pub struct WatcherStore {
     path: PathBuf,
 }
@@ -101,7 +133,9 @@ impl WatcherStore {
             std::fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_string_pretty(configs)?;
-        std::fs::write(&self.path, data)?;
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, data)?;
+        std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }
 }
@@ -125,7 +159,9 @@ impl SuspendedWatcherRegistry {
         self.inner.lock().unwrap().retain(|c| c.id != id);
     }
 
-    pub fn inner_arc(&self) -> Arc<Mutex<Vec<PersistedWatcherConfig>>> {
-        self.inner.clone()
+    pub fn push(&self, cfg: PersistedWatcherConfig) {
+        let mut v = self.inner.lock().unwrap();
+        v.retain(|c| c.id != cfg.id);
+        v.push(cfg);
     }
 }

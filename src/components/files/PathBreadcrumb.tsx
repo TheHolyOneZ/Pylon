@@ -1,188 +1,136 @@
-import { useRef, useState, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "framer-motion";
-import { BookmarkCheck, BookmarkPlus, ChevronRight, Star, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { ChevronRight, HardDrive, Home, Star, StarOff } from "lucide-react";
 import { useFileStore } from "../../stores/fileStore";
+import { localCrumbs, remoteCrumbs } from "../../lib/path";
+import * as api from "../../lib/tauri";
+import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
   path: string;
   side: "local" | "remote";
   onNavigate: (path: string) => void;
+  homePath?: string | null;
+  editSignal?: number;
 }
 
-export function PathBreadcrumb({ path, side, onNavigate }: Props) {
+export function PathBreadcrumb({ path, side, onNavigate, homePath, editSignal }: Props) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(path);
-  const [showBookmarks, setShowBookmarks] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState({ x: 0, y: 0 });
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuEntry[] } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const starBtnRef = useRef<HTMLButtonElement>(null);
+  const trail = useRef<HTMLDivElement>(null);
   const { bookmarks, addBookmark, removeBookmark } = useFileStore();
 
-  const relevantBookmarks = bookmarks.filter((b) => b.side === side);
-  const currentBookmark = relevantBookmarks.find((b) => b.path === path);
-  const isBookmarked = !!currentBookmark;
+  const sideBookmarks = bookmarks.filter((b) => b.side === side);
+  const current = sideBookmarks.find((b) => b.path === path);
+  const crumbs = side === "local" ? localCrumbs(path) : remoteCrumbs(path);
 
-  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  const crumbs = [
-    { label: "/", path: "/" },
-    ...parts.map((p, i) => ({ label: p, path: "/" + parts.slice(0, i + 1).join("/") })),
-  ];
+  const lastSignal = useRef(editSignal);
+  useEffect(() => {
+    if (editSignal && editSignal !== lastSignal.current) startEdit();
+    lastSignal.current = editSignal;
+  }, [editSignal]);
+
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const el = trail.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    const update = () => setClipped(el.scrollLeft > 1);
+    update();
+    const ro = new ResizeObserver(() => { el.scrollLeft = el.scrollWidth; update(); });
+    ro.observe(el);
+    el.addEventListener("scroll", update, { passive: true });
+    return () => { ro.disconnect(); el.removeEventListener("scroll", update); };
+  }, [path, editing]);
 
   function startEdit() {
     setEditVal(path);
     setEditing(true);
-    setTimeout(() => inputRef.current?.select(), 0);
+    requestAnimationFrame(() => inputRef.current?.select());
   }
 
-  function commitEdit() {
+  function commit() {
     const v = editVal.trim();
-    if (v) onNavigate(v);
     setEditing(false);
+    if (v && v !== path) onNavigate(v);
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") commitEdit();
-    if (e.key === "Escape") setEditing(false);
-  }
-
-  function toggleBookmark() {
-    if (isBookmarked) {
-      removeBookmark(currentBookmark.id);
-    } else {
-      const label = parts[parts.length - 1] || "/";
-      addBookmark(label, path, side);
+  async function openBookmarks(e: React.MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const items: ContextMenuEntry[] = [
+      current
+        ? { label: "Remove bookmark", icon: <StarOff size={13} />, onClick: () => removeBookmark(current.id) }
+        : { label: "Bookmark this folder", icon: <Star size={13} />, onClick: () => addBookmark(crumbs.at(-1)?.label || path, path, side) },
+    ];
+    if (homePath) items.push({ label: "Home", icon: <Home size={13} />, onClick: () => onNavigate(homePath) });
+    if (side === "local") {
+      const drives = await api.getLocalDrives().catch(() => []);
+      if (drives.length > 1 || (drives[0] && drives[0].path !== "/")) {
+        items.push({ separator: true });
+        for (const d of drives) items.push({ label: d.name, icon: <HardDrive size={13} />, onClick: () => onNavigate(d.path.replace(/\\/g, "/")) });
+      }
     }
-  }
-
-  function openDropdown() {
-    if (starBtnRef.current) {
-      const rect = starBtnRef.current.getBoundingClientRect();
-      setDropdownPos({ x: rect.right, y: rect.bottom + 4 });
+    if (sideBookmarks.length) {
+      items.push({ separator: true });
+      for (const b of sideBookmarks) items.push({ label: b.label, icon: <Star size={13} className="fill-pylon-amber/60 text-pylon-amber" />, onClick: () => onNavigate(b.path) });
     }
-    setShowBookmarks((v) => !v);
+    setMenu({ x: r.left, y: r.bottom + 4, items });
   }
-
-  useEffect(() => {
-    if (!showBookmarks) return;
-    function handle(e: MouseEvent) {
-      if (starBtnRef.current?.contains(e.target as Node)) return;
-      setShowBookmarks(false);
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [showBookmarks]);
 
   return (
-    <div className="flex items-center gap-1 overflow-hidden relative">
+    <div className="flex min-w-0 flex-1 items-center gap-1">
       {editing ? (
         <input
           ref={inputRef}
           value={editVal}
           onChange={(e) => setEditVal(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={handleKeyDown}
-          className="flex-1 min-w-0 bg-void-700 border border-pylon-cyan/40 rounded px-2 py-0 text-xs text-slate-100 outline-none font-mono"
-          autoFocus
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded-md border border-pylon-cyan/60 bg-void-950 px-2 font-mono text-xs text-slate-100 outline-none"
         />
       ) : (
-        <button
-          onClick={startEdit}
-          title="Click to type a path"
-          className="flex items-center gap-0.5 overflow-hidden min-w-0 flex-1"
+        <div
+          ref={trail}
+          onDoubleClick={startEdit}
+          onClick={(e) => { if (e.target === e.currentTarget) startEdit(); }}
+          title="Click empty space or press Ctrl+L to type a path"
+          className="no-scrollbar flex h-7 min-w-0 flex-1 items-center overflow-x-auto whitespace-nowrap rounded-md border border-void-600 bg-void-950/40 px-1 hover:border-void-500"
+          style={{
+            scrollbarWidth: "none",
+            ...(clipped ? { maskImage: "linear-gradient(to right, transparent, #000 28px)", WebkitMaskImage: "linear-gradient(to right, transparent, #000 28px)" } : {}),
+          }}
         >
-          {crumbs.map((crumb, i) => (
-            <span key={crumb.path} className="flex items-center gap-0.5 shrink-0">
-              {i > 0 && <ChevronRight size={10} className="text-slate-600" />}
-              <span
-                onClick={(e) => { e.stopPropagation(); onNavigate(crumb.path); }}
-                className={`text-xs px-1 rounded hover:bg-void-600 transition-colors ${
-                  i === crumbs.length - 1 ? "text-slate-300" : "text-slate-500 hover:text-slate-300"
-                }`}
-              >
-                {crumb.label}
+          {crumbs.map((c, i) => {
+            const last = i === crumbs.length - 1;
+            return (
+              <span key={c.path} className="flex shrink-0 items-center">
+                {i > 0 && <ChevronRight size={12} className="shrink-0 text-slate-600" />}
+                <button
+                  onClick={() => !last && onNavigate(c.path)}
+                  className={`rounded px-1.5 py-0.5 text-xs ${last ? "font-medium text-slate-100" : "text-slate-400 hover:bg-void-700 hover:text-slate-100"}`}
+                >
+                  {c.label}
+                </button>
               </span>
-            </span>
-          ))}
-        </button>
+            );
+          })}
+        </div>
       )}
-
-      {}
       <button
-        ref={starBtnRef}
-        onClick={openDropdown}
-        title="Bookmarks"
-        className={`flex items-center gap-0.5 p-1 rounded transition-colors shrink-0 ${
-          isBookmarked
-            ? "text-pylon-amber"
-            : relevantBookmarks.length > 0
-            ? "text-pylon-amber/50 hover:text-pylon-amber"
-            : "text-slate-600 hover:text-slate-400"
-        }`}
+        onClick={openBookmarks}
+        title="Bookmarks & locations"
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-void-700 ${current ? "text-pylon-amber" : "text-slate-500 hover:text-slate-200"}`}
       >
-        <Star size={11} className={isBookmarked ? "fill-pylon-amber" : ""} />
-        {relevantBookmarks.length > 0 && (
-          <span className="text-[9px] font-mono">{relevantBookmarks.length}</span>
-        )}
+        <Star size={13} className={current ? "fill-pylon-amber" : ""} />
       </button>
-
-      {}
-      {createPortal(
-        <AnimatePresence>
-          {showBookmarks && (
-            <motion.div
-              initial={{ opacity: 0, y: -4, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -4, scale: 0.97 }}
-              transition={{ duration: 0.1 }}
-              style={{ position: "fixed", right: window.innerWidth - dropdownPos.x, top: dropdownPos.y }}
-              className="w-64 bg-void-800 border border-void-500 rounded-lg shadow-2xl z-[9999] overflow-hidden"
-            >
-              <button
-                onClick={() => { toggleBookmark(); if (isBookmarked) setShowBookmarks(false); }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors border-b border-void-600 ${
-                  isBookmarked
-                    ? "text-pylon-amber/80 hover:bg-pylon-red/10 hover:text-pylon-red"
-                    : "text-pylon-cyan hover:bg-pylon-cyan/10"
-                }`}
-              >
-                {isBookmarked ? <BookmarkCheck size={11} /> : <BookmarkPlus size={11} />}
-                {isBookmarked ? "Remove bookmark for this path" : "Bookmark current path"}
-              </button>
-
-              {relevantBookmarks.length === 0 ? (
-                <div className="px-3 py-3 text-center">
-                  <p className="text-[11px] text-slate-600">No bookmarks saved yet</p>
-                  <p className="text-[10px] text-slate-700 mt-0.5">Navigate to a folder and bookmark it above</p>
-                </div>
-              ) : (
-                <div className="py-1 max-h-52 overflow-y-auto">
-                  {relevantBookmarks.map((bm) => (
-                    <div key={bm.id} className="flex items-center group">
-                      <button
-                        onClick={() => { onNavigate(bm.path); setShowBookmarks(false); }}
-                        className="flex-1 flex flex-col text-left px-3 py-1.5 hover:bg-void-700 transition-colors min-w-0"
-                      >
-                        <span className={`text-xs font-medium truncate ${bm.path === path ? "text-pylon-amber" : "text-slate-200"}`}>
-                          {bm.label}
-                        </span>
-                        <span className="text-[10px] text-slate-600 truncate font-mono">{bm.path}</span>
-                      </button>
-                      <button
-                        onClick={() => removeBookmark(bm.id)}
-                        className="opacity-0 group-hover:opacity-100 p-2 text-slate-600 hover:text-pylon-red transition-all shrink-0"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body
-      )}
+      <AnimatePresence>{menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}</AnimatePresence>
     </div>
   );
 }

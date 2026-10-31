@@ -1,6 +1,6 @@
 [package]
 name = "pylon"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["TheHolyOneZ"]
 license = "GPL-3.0"
@@ -20,8 +20,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-clipboard-manager = "2"
 
 # SSH / SFTP
 ssh2 = { version = "0.9", features = ["vendored-openssl", "openssl-on-win32"] }
@@ -39,12 +39,9 @@ argon2 = "0.5"
 rand = "0.8"
 # File system watcher (Pylon-Sync)
 notify = "6"
-# Metadata stripping
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# Metadata reading (stripping is done losslessly in metadata.rs)
 exif = { package = "kamadak-exif", version = "0.5" }
 lopdf = "0.32"
-# Parallel transfers
-rayon = "1"
 # Error handling
 anyhow = "1"
 thiserror = "1"
@@ -61,28 +58,16 @@ hex = "0.4"
 dirs = "5"
 # SHA-256 checksums for transfer verification
 sha2 = "0.10"
-# Office format metadata stripping (DOCX/XLSX/PPTX are ZIP containers)
-zip = "0.6"
-# MP3/FLAC ID3 tag stripping
-id3 = "1"
+# HMAC-SHA1 for hashed known_hosts entries (|1|salt|hash)
+hmac = "0.12"
+sha1 = "0.10"
 # .gitignore/.syncignore pattern matching for Pylon-Sync
 ignore = "0.4"
-# Streaming I/O utilities
-tokio-util = { version = "0.7", features = ["io"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 # Path handling
 dunce = "1"
-# Progress channels
-flume = "0.11"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
-[profile.release]
-strip = true
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"

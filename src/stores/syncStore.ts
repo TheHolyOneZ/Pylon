@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
+import { listSyncs } from "../lib/tauri";
 import { PersistedWatcherConfig, SyncConfig, SyncConfirmRequest, SyncRule } from "../types";
 
 export interface SyncEventEntry {
@@ -98,6 +99,12 @@ export const useSyncStore = create<SyncStore>((set) => ({
             };
             const errors = { ...state.errors };
             delete errors[p.sync_id];
+            const recent = state.events.slice(0, 8).find(
+              (x) => x.syncId === entry.syncId && x.relPath === entry.relPath && x.kind === entry.kind && x.skipped === entry.skipped && entry.ts - x.ts < 3000,
+            );
+            if (recent) {
+              return { events: state.events.map((x) => (x === recent ? { ...x, ts: entry.ts } : x)), errors };
+            }
             return { events: [entry, ...state.events].slice(0, 500), errors };
           });
         }
@@ -126,6 +133,7 @@ export const useSyncStore = create<SyncStore>((set) => ({
           set((state) => ({
             suspendedSyncs: state.suspendedSyncs.filter((s) => s.id !== e.payload.sync_id),
           }));
+          listSyncs().then((syncs) => set({ syncs })).catch(() => {});
         }
       ),
       listen<PersistedWatcherConfig>(
@@ -141,7 +149,6 @@ export const useSyncStore = create<SyncStore>((set) => ({
       listen<{ sync_id: string; sync_label: string }>(
         "sync://done",
         (e) => {
-
           set((state) => ({
             syncs: state.syncs.map((s) =>
               s.id === e.payload.sync_id ? { ...s, active: false } : s

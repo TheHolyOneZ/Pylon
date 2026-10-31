@@ -5,12 +5,12 @@ import { RemotePane } from "./RemotePane";
 export function FileExplorer() {
   return (
     <div className="h-full">
-      <PanelGroup direction="horizontal">
-        <Panel defaultSize={50} minSize={25}>
+      <PanelGroup direction="horizontal" autoSaveId="pylon-files-horizontal">
+        <Panel id="local" order={1} defaultSize={50} minSize={22}>
           <LocalPane />
         </Panel>
-        <PanelResizeHandle className="w-px bg-void-600 hover:bg-pylon-violet/40 transition-colors cursor-col-resize" />
-        <Panel defaultSize={50} minSize={25}>
+        <PanelResizeHandle className="relative w-px bg-void-600 transition-colors hover:bg-pylon-cyan/60 data-[resize-handle-active]:bg-pylon-cyan before:absolute before:-inset-x-1.5 before:inset-y-0 before:content-['']" />
+        <Panel id="remote" order={2} defaultSize={50} minSize={22}>
           <RemotePane />
         </Panel>
       </PanelGroup>

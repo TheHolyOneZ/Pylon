@@ -1,5 +1,3 @@
-
-
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
@@ -17,7 +15,6 @@ pub const NONCE_LEN: usize = 12;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct EncryptedBlob {
-
     pub salt: String,
 
     pub nonce: String,

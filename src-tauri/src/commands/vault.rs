@@ -1,107 +1,121 @@
-use std::sync::{Arc, atomic::AtomicBool};
-use tauri::{Emitter, State};
+use tauri::{AppHandle, Emitter, Manager};
 
+use super::blocking;
 use crate::{
     error::PylonError,
-    fs_watcher::{SyncConfig, WatcherRegistry},
-    known_hosts,
-    session::{self, LiveSession, SessionRegistry, TermAuthParams},
+    fs_watcher::WatcherRegistry,
+    session::{self, ConnectOutcome, ConnectionInfo, SessionRegistry},
+    ssh::AuthParams,
     vault::{self, AuthType, Credential},
     vault_manager::{VaultManager, VaultProfile},
-    watcher_store::{PersistedWatcherConfig, SuspendedWatcherRegistry},
+    watcher_store::SuspendedWatcherRegistry,
 };
 
 #[tauri::command]
-pub async fn vault_list_profiles(manager: State<'_, VaultManager>) -> Result<Vec<VaultProfile>, PylonError> {
-    Ok(manager.list_profiles())
+pub async fn vault_list_profiles(app: AppHandle) -> Result<Vec<VaultProfile>, PylonError> {
+    Ok(app.state::<VaultManager>().list_profiles())
 }
 
 #[tauri::command]
-pub async fn vault_active_profile_id(manager: State<'_, VaultManager>) -> Result<String, PylonError> {
-    Ok(manager.active_profile_id())
+pub async fn vault_active_profile_id(app: AppHandle) -> Result<String, PylonError> {
+    Ok(app.state::<VaultManager>().active_profile_id())
 }
 
 #[tauri::command]
-pub async fn vault_select_profile(
-    manager: State<'_, VaultManager>,
-    profile_id: String,
-) -> Result<(), PylonError> {
-    manager.select_profile(&profile_id)
+pub async fn vault_select_profile(app: AppHandle, profile_id: String) -> Result<(), PylonError> {
+    let m = app.state::<VaultManager>();
+    m.lock_all();
+    m.select_profile(&profile_id)
 }
 
 #[tauri::command]
-pub async fn vault_create_profile(
-    manager: State<'_, VaultManager>,
-    name: String,
-    color: String,
-    icon: String,
-) -> Result<VaultProfile, PylonError> {
-    manager.create_profile(name, color, icon)
+pub async fn vault_create_profile(app: AppHandle, name: String, color: String, icon: String) -> Result<VaultProfile, PylonError> {
+    app.state::<VaultManager>().create_profile(name, color, icon)
 }
 
 #[tauri::command]
-pub async fn vault_delete_profile(
-    manager: State<'_, VaultManager>,
-    profile_id: String,
-) -> Result<(), PylonError> {
-    manager.delete_profile(&profile_id)
+pub async fn vault_delete_profile(app: AppHandle, profile_id: String) -> Result<(), PylonError> {
+    app.state::<VaultManager>().delete_profile(&profile_id)
 }
 
 #[tauri::command]
-pub async fn vault_rename_profile(
-    manager: State<'_, VaultManager>,
-    profile_id: String,
-    name: String,
-    color: String,
-    icon: String,
-) -> Result<(), PylonError> {
-    manager.rename_profile(&profile_id, name, color, icon)
+pub async fn vault_rename_profile(app: AppHandle, profile_id: String, name: String, color: String, icon: String) -> Result<(), PylonError> {
+    app.state::<VaultManager>().rename_profile(&profile_id, name, color, icon)
 }
 
 #[tauri::command]
-pub async fn vault_unlock(
-    manager: State<'_, VaultManager>,
-    passphrase: String,
-) -> Result<(), PylonError> {
-    manager.unlock(&passphrase)
+pub async fn vault_exists(app: AppHandle) -> Result<bool, PylonError> {
+    Ok(app.state::<VaultManager>().exists())
 }
 
 #[tauri::command]
-pub async fn vault_lock(manager: State<'_, VaultManager>) -> Result<(), PylonError> {
-    manager.lock();
+pub async fn vault_create(app: AppHandle, passphrase: String) -> Result<(), PylonError> {
+    blocking(move || app.state::<VaultManager>().create(&passphrase)).await
+}
+
+#[tauri::command]
+pub async fn vault_unlock(app: AppHandle, passphrase: String) -> Result<(), PylonError> {
+    blocking(move || app.state::<VaultManager>().unlock(&passphrase)).await
+}
+
+#[tauri::command]
+pub async fn vault_change_passphrase(app: AppHandle, current: String, new_passphrase: String) -> Result<(), PylonError> {
+    blocking(move || app.state::<VaultManager>().change_passphrase(&current, &new_passphrase)).await
+}
+
+#[tauri::command]
+pub async fn vault_lock(app: AppHandle) -> Result<(), PylonError> {
+    app.state::<VaultManager>().lock_all();
     Ok(())
 }
 
 #[tauri::command]
-pub async fn vault_is_unlocked(manager: State<'_, VaultManager>) -> Result<bool, PylonError> {
-    Ok(manager.is_unlocked())
+pub async fn vault_is_unlocked(app: AppHandle) -> Result<bool, PylonError> {
+    Ok(app.state::<VaultManager>().is_unlocked())
 }
 
 #[tauri::command]
-pub async fn vault_reset(manager: State<'_, VaultManager>) -> Result<(), PylonError> {
-    manager.reset()
+pub async fn vault_reset(app: AppHandle) -> Result<(), PylonError> {
+    app.state::<VaultManager>().reset()
+}
+
+fn blank_to_none(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.trim().is_empty())
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn vault_add_credential(
-    manager: State<'_, VaultManager>,
-    passphrase: String,
+    app: AppHandle,
     label: String,
     host: String,
     port: u16,
     username: String,
     password: Option<String>,
     private_key: Option<String>,
+    key_passphrase: Option<String>,
     auth_type: AuthType,
 ) -> Result<String, PylonError> {
-    let cred = vault::new_credential(label, host, port, username, password, private_key, auth_type);
-    manager.add_credential_returning_id(&passphrase, cred)
+    blocking(move || {
+        let cred = vault::new_credential(
+            label.trim().to_string(),
+            host.trim().to_string(),
+            port,
+            username.trim().to_string(),
+            blank_to_none(password),
+            blank_to_none(private_key),
+            blank_to_none(key_passphrase),
+            auth_type,
+        );
+        app.state::<VaultManager>().add_credential(cred)
+    })
+    .await
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn vault_update_credential(
-    manager: State<'_, VaultManager>,
-    passphrase: String,
+    app: AppHandle,
     id: String,
     label: String,
     host: String,
@@ -109,239 +123,130 @@ pub async fn vault_update_credential(
     username: String,
     password: Option<String>,
     private_key: Option<String>,
+    key_passphrase: Option<String>,
     auth_type: AuthType,
 ) -> Result<(), PylonError> {
-    let cred = Credential {
-        id,
-        label,
-        host,
-        port,
-        username,
-        password,
-        private_key,
-        auth_type,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        last_used: None,
-    };
-    manager.update_credential(&passphrase, cred)
+    blocking(move || {
+        let cred = Credential {
+            id,
+            label: label.trim().to_string(),
+            host: host.trim().to_string(),
+            port,
+            username: username.trim().to_string(),
+            password: blank_to_none(password),
+            private_key: blank_to_none(private_key),
+            key_passphrase: blank_to_none(key_passphrase),
+            auth_type,
+            created_at: String::new(),
+            last_used: None,
+        };
+        app.state::<VaultManager>().update_credential(cred)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn vault_get_credential(
-    manager: State<'_, VaultManager>,
-    id: String,
-) -> Result<Credential, PylonError> {
-    manager.get_credential(&id)
+pub async fn vault_get_credential(app: AppHandle, id: String) -> Result<Credential, PylonError> {
+    app.state::<VaultManager>().get_credential(&id)
 }
 
 #[tauri::command]
-pub async fn vault_list_credentials(manager: State<'_, VaultManager>) -> Result<Vec<Credential>, PylonError> {
-    manager.list_credentials()
+pub async fn vault_list_credentials(app: AppHandle) -> Result<Vec<Credential>, PylonError> {
+    app.state::<VaultManager>().list_credentials()
 }
 
 #[tauri::command]
 pub async fn vault_delete_credential(
-    manager: State<'_, VaultManager>,
-    passphrase: String,
+    app: AppHandle,
     id: String,
 ) -> Result<(), PylonError> {
-    manager.delete_credential(&passphrase, &id)
+    blocking(move || app.state::<VaultManager>().delete_credential(&id)).await
+}
+
+fn auth_for(cred: &Credential) -> Result<AuthParams, PylonError> {
+    let (password, private_key) = match cred.auth_type {
+        AuthType::Password => {
+            if cred.password.is_none() {
+                return Err(PylonError::Ssh(format!("\"{}\" has no saved password — edit it in ZVault", cred.label)));
+            }
+            (cred.password.clone(), None)
+        }
+        AuthType::PrivateKey => {
+            if cred.private_key.is_none() {
+                return Err(PylonError::Ssh(format!("\"{}\" has no saved key — edit it in ZVault", cred.label)));
+            }
+            (None, cred.private_key.clone())
+        }
+        AuthType::Agent => (None, None),
+    };
+    Ok(AuthParams {
+        host: cred.host.clone(),
+        port: cred.port,
+        username: cred.username.clone(),
+        password,
+        private_key,
+        key_passphrase: cred.key_passphrase.clone(),
+        expected_fingerprint: None,
+    })
+}
+
+fn vault_establish(app: &AppHandle, credential_id: &str, accept: Option<(String, bool)>) -> Result<ConnectOutcome, PylonError> {
+    let manager = app.state::<VaultManager>();
+    let cred = manager.get_credential_with_secret(credential_id)?;
+    let auth = auth_for(&cred)?;
+    let reg = app.state::<SessionRegistry>();
+    let outcome = session::establish(app, &reg, auth, &cred.label, true, Some(credential_id.to_string()), accept)?;
+    if let ConnectOutcome::Connected(info) = &outcome {
+        manager.touch(credential_id);
+        resume_suspended_watchers(app, &info.id, credential_id, info.server_fingerprint.as_deref().unwrap_or(""));
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub async fn vault_connect(app: AppHandle, credential_id: String) -> Result<serde_json::Value, PylonError> {
+    blocking(move || {
+        Ok(match vault_establish(&app, &credential_id, None)? {
+            ConnectOutcome::Connected(info) => serde_json::json!({ "status": "connected", "info": info }),
+            ConnectOutcome::NeedsHostKey(v) => {
+                let status = if v.status == "changed" { "host_key_changed" } else { "host_key_unknown" };
+                serde_json::json!({ "status": status, "verification": v })
+            }
+        })
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn vault_accept_host_key_and_connect(
-    app: tauri::AppHandle,
-    manager: State<'_, VaultManager>,
-    registry: State<'_, SessionRegistry>,
-    watcher_registry: State<'_, WatcherRegistry>,
-    suspended_registry: State<'_, SuspendedWatcherRegistry>,
+    app: AppHandle,
     credential_id: String,
+    fingerprint: String,
     permanent: bool,
-) -> Result<session::ConnectionInfo, PylonError> {
-    let cred = manager.get_credential_with_secret(&credential_id)?;
-    let password = cred.password.as_deref();
-    let private_key = cred.private_key.as_deref();
-
-    let addr = format!("{}:{}", cred.host, cred.port);
-    let tcp = std::net::TcpStream::connect(&addr)
-        .map_err(|e| PylonError::Ssh(format!("TCP connect to {addr}: {e}")))?;
-
-    let mut temp_sess = ssh2::Session::new().map_err(|e| PylonError::Ssh(e.to_string()))?;
-    temp_sess.set_blocking(true);
-    temp_sess.set_timeout(30_000);
-    temp_sess.set_tcp_stream(tcp);
-    temp_sess.handshake().map_err(|e| PylonError::Ssh(format!("Handshake: {e}")))?;
-
-    let (key_bytes, key_type) = temp_sess
-        .host_key()
-        .ok_or_else(|| PylonError::Ssh("Server provided no host key".into()))?;
-    let key_type_str = match key_type {
-        ssh2::HostKeyType::Rsa => "ssh-rsa",
-        ssh2::HostKeyType::Dss => "ssh-dss",
-        ssh2::HostKeyType::Ecdsa256 => "ecdsa-sha2-nistp256",
-        ssh2::HostKeyType::Ecdsa384 => "ecdsa-sha2-nistp384",
-        ssh2::HostKeyType::Ecdsa521 => "ecdsa-sha2-nistp521",
-        ssh2::HostKeyType::Ed25519 => "ssh-ed25519",
-        _ => "unknown",
-    };
-    let fingerprint = known_hosts::sha256_fingerprint(key_bytes);
-    let key_bytes_owned = key_bytes.to_vec();
-
-    if permanent {
-        known_hosts::add_host_key(&cred.host, cred.port, &key_bytes_owned, key_type_str)?;
-    }
-
-    let (sess, mut info) = session::authenticate_and_build(
-        temp_sess, &cred.host, cred.port, &cred.username,
-        password, private_key,
-        &cred.label, fingerprint, key_type_str.to_string(),
-    )?;
-
-    info.from_vault = true;
-    let cancel = Arc::new(AtomicBool::new(false));
-    let sess_arc = Arc::new(std::sync::Mutex::new(sess));
-    session::spawn_keepalive(sess_arc.clone(), cancel.clone(), app.clone(), info.id.clone());
-    let term_auth = TermAuthParams {
-        host: cred.host.clone(),
-        port: cred.port,
-        username: cred.username.clone(),
-        password: cred.password.clone(),
-        private_key: cred.private_key.clone(),
-    };
-    let session_id = info.id.clone();
-    let live = LiveSession { info: info.clone(), session: sess_arc.clone(), keepalive_cancel: cancel, term_auth };
-    registry.add(live);
-    registry.set_credential_id(&session_id, &credential_id);
-    resume_suspended_watchers(&app, &session_id, &credential_id, &sess_arc, &suspended_registry, &watcher_registry);
-    Ok(info)
+) -> Result<ConnectionInfo, PylonError> {
+    blocking(move || match vault_establish(&app, &credential_id, Some((fingerprint, permanent)))? {
+        ConnectOutcome::Connected(info) => Ok(info),
+        ConnectOutcome::NeedsHostKey(_) => Err(PylonError::Ssh("Host key verification failed".into())),
+    })
+    .await
 }
 
-fn resume_suspended_watchers(
-    app: &tauri::AppHandle,
-    session_id: &str,
-    credential_id: &str,
-    session_arc: &Arc<std::sync::Mutex<ssh2::Session>>,
-    suspended_registry: &SuspendedWatcherRegistry,
-    watcher_registry: &WatcherRegistry,
-) {
-    let current_fp = session_arc.lock().ok().and_then(|s| {
-        s.host_key().map(|(kb, _)| known_hosts::sha256_fingerprint(kb))
-    });
+fn resume_suspended_watchers(app: &AppHandle, session_id: &str, credential_id: &str, fingerprint: &str) {
+    let Ok(conn) = app.state::<SessionRegistry>().get_conn(session_id) else { return };
+    let watchers = app.state::<WatcherRegistry>();
+    for id in watchers.rebind(credential_id, fingerprint, session_id, &conn) {
+        let _ = app.emit("sync://resumed", serde_json::json!({ "sync_id": id }));
+    }
 
-    let candidates: Vec<PersistedWatcherConfig> = suspended_registry
-        .list()
-        .into_iter()
-        .filter(|c| c.credential_id == credential_id)
-        .collect();
-
-    for cfg in candidates {
-        let fp_matches = current_fp
-            .as_deref()
-            .map(|fp| fp == cfg.expected_fingerprint)
-            .unwrap_or(false);
-
-        if !fp_matches {
+    let suspended = app.state::<SuspendedWatcherRegistry>();
+    for cfg in suspended.list().into_iter().filter(|c| c.credential_id == credential_id) {
+        if cfg.expected_fingerprint != fingerprint {
             continue;
         }
-
-        let sync_config = SyncConfig {
-            id: cfg.id.clone(),
-            label: cfg.label.clone(),
-            local_root: cfg.local_root.clone(),
-            remote_root: cfg.remote_root.clone(),
-            session_id: session_id.to_string(),
-            strip_metadata: cfg.strip_metadata,
-            active: true,
-            events_processed: 0,
-            bytes_synced: 0,
-            exclude_patterns: cfg.exclude_patterns.clone(),
-            preserve_timestamps: cfg.preserve_timestamps,
-            mirror_permissions: cfg.mirror_permissions,
-            rule: cfg.rule.clone(),
-            from_vault: true,
-            expected_host: cfg.expected_host.clone(),
-            expected_port: cfg.expected_port,
-            keep_on_disconnect: cfg.keep_on_disconnect,
-            credential_id: cfg.credential_id.clone(),
-            expected_fingerprint: cfg.expected_fingerprint.clone(),
-            protected_patterns: cfg.protected_patterns.clone(),
-            dry_run: cfg.dry_run,
-            max_file_size_kb: cfg.max_file_size_kb,
-            sync_deletes: cfg.sync_deletes,
-            initial_sync_only: cfg.initial_sync_only,
-        };
-
-        if watcher_registry.start(app.clone(), sync_config, session_arc.clone()).is_ok() {
-            suspended_registry.remove(&cfg.id);
-            let _ = app.emit("sync://resumed", serde_json::json!({
-                "sync_id": &cfg.id,
-                "label": &cfg.label,
-            }));
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn vault_connect(
-    app: tauri::AppHandle,
-    manager: State<'_, VaultManager>,
-    registry: State<'_, SessionRegistry>,
-    watcher_registry: State<'_, WatcherRegistry>,
-    suspended_registry: State<'_, SuspendedWatcherRegistry>,
-    credential_id: String,
-) -> Result<serde_json::Value, PylonError> {
-    let cred = manager.get_credential_with_secret(&credential_id)?;
-
-    match &cred.auth_type {
-        crate::vault::AuthType::Password if cred.password.is_none() => {
-            return Err(PylonError::Ssh(
-                "This credential was saved without a password (old vault format). \
-                 Please delete and re-add it in ZVault with the correct password.".into()
-            ));
-        }
-        crate::vault::AuthType::PrivateKey if cred.private_key.is_none() => {
-            return Err(PylonError::Ssh(
-                "This credential was saved without an SSH key (old vault format). \
-                 Please delete and re-add it in ZVault with the correct key.".into()
-            ));
-        }
-        _ => {}
-    }
-
-    let password = cred.password.as_deref();
-    let private_key = cred.private_key.as_deref();
-
-    let result = session::open_session(
-        &cred.host, cred.port, &cred.username,
-        password, private_key, &cred.label,
-    )?;
-
-    match result {
-        session::OpenSessionResult::Ready(sess, info) => {
-            let cancel = Arc::new(AtomicBool::new(false));
-            let sess_arc = Arc::new(std::sync::Mutex::new(sess));
-            session::spawn_keepalive(sess_arc.clone(), cancel.clone(), app.clone(), info.id.clone());
-            let term_auth = TermAuthParams {
-                host: cred.host.clone(),
-                port: cred.port,
-                username: cred.username.clone(),
-                password: cred.password.clone(),
-                private_key: cred.private_key.clone(),
-            };
-            let mut info = info;
-            info.from_vault = true;
-            let session_id = info.id.clone();
-            let live = LiveSession { info: info.clone(), session: sess_arc.clone(), keepalive_cancel: cancel, term_auth };
-            registry.add(live);
-            registry.set_credential_id(&session_id, &credential_id);
-            resume_suspended_watchers(&app, &session_id, &credential_id, &sess_arc, &suspended_registry, &watcher_registry);
-            Ok(serde_json::json!({ "status": "connected", "info": info }))
-        }
-        session::OpenSessionResult::NeedsHostKeyConfirmation(verification, _) => {
-            Ok(serde_json::json!({ "status": "host_key_unknown", "verification": verification }))
-        }
-        session::OpenSessionResult::HostKeyChanged(verification) => {
-            Ok(serde_json::json!({ "status": "host_key_changed", "verification": verification }))
+        let sync_config = cfg.to_sync_config(session_id);
+        if watchers.start(app.clone(), sync_config.clone(), conn.clone()).is_ok() {
+            suspended.remove(&cfg.id);
+            let _ = app.emit("sync://resumed", serde_json::json!({ "sync_id": &cfg.id, "label": &cfg.label, "config": sync_config }));
         }
     }
 }

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.0] — 31.10.2026
+
+### Fixed — data safety
+- **Vault re-encrypted with an empty passphrase**: the frontend sent `""` on save, silently re-keying the vault. Vault rewritten as format v3 (single Argon2id derivation, per-entry AES-GCM, all-or-nothing unlock, damaged files never overwritten, automatic v1/v2 migration with backup).
+- **Corrupt resumed downloads**: resume appended to the wrong offset. Transfers now stream into a deterministic `.pylon-part` file and really resume (also after restarts and reconnects).
+- **No integrity check**: files ≥ 1 MB are verified with SHA-256 against the server; a mismatch fails the transfer.
+- **Lossy metadata stripping**: images were re-encoded at JPEG q75, dropping ICC profiles and flattening GIFs. Stripping is now lossless.
+- Uploads replacing a file lost its permissions; downloads lost the modification time.
+
+### Fixed — security
+- `known_hosts`: any hashed (`|1|`) line matched every host, and only the first line was checked. Hashed entries, wildcards, negation, `@revoked` and key types are now handled; the approved fingerprint is pinned for the connection.
+- "Auto-accept" also accepted *changed* host keys; it now only applies to new hosts.
+- Private keys are no longer written to temporary files.
+- Real Content-Security-Policy; devtools only with `PYLON_DEVTOOLS=1`; unused `fs` plugin permission removed.
+- App lock used unsalted SHA-256; it now uses salted PBKDF2-SHA256 (old hashes upgrade on unlock) and no longer forces a password on first launch.
+
+### Fixed — reliability
+- Every blocking SSH/SFTP call ran on the async runtime and could freeze the UI; they now run on worker threads, and the SFTP channel is cached and reopened when needed.
+- Dropped connections were noticed only after ~40 s and showed libssh2 jargon ("Failure while draining incoming flow"). They are now detected within a second during activity, reported as "connection to the server was lost", and saved servers auto-reconnect (now the default) and return to the same folder. Retrying a failed transfer after a reconnect targets the new session and resumes.
+- Terminal busy-looped a CPU core; partial writes dropped keystrokes; Ctrl+D/Ctrl+K were swallowed by app shortcuts; login shell is now used by default.
+- Pausing a throttled transfer caused a burst on resume.
+- Sync watcher: renames, nested folders, deletes and `.gitignore` handling fixed; watchers resume after reconnect.
+- Panes now refresh when a transfer finishes in the visible folder (retries didn't refresh before).
+- Ctrl+Enter (upload/download selection) opened the file instead.
+- The breadcrumb opened in edit mode after a reconnect.
+- Colour themes changed only the checkmark — every colour now comes from CSS variables.
+- Windows: build no longer requires system OpenSSL; local paths, drive letters and file names sanitised.
+- macOS: native traffic-light title bar and ⌘ shortcuts.
+
+### Changed — interface
+- Shared UI primitives (buttons, fields, modals, toggles) used throughout; modals no longer steal focus on re-render.
+- Compact transfer drawer and history with filters and a "Verified" badge.
+- New app mark; bundled fonts (no Google Fonts request); breadcrumb fades when clipped; empty terminal bar hidden.
+- Removed placeholder UI ("Light — coming soon", decorative bars) and fixed low-contrast text.
+
 ## [0.2.0] — 15.05.2026
 
 ### Fixed

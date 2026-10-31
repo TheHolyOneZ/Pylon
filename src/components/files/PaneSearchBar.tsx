@@ -1,15 +1,14 @@
-import { useState } from "react";
-import { Search, X, Regex } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 export type TypeFilter = "all" | "folders" | "code" | "images" | "media" | "docs" | "archives";
 
-const CHIPS: { id: TypeFilter; label: string }[] = [
-  { id: "all",      label: "All"      },
-  { id: "folders",  label: "Folders"  },
-  { id: "code",     label: "Code"     },
-  { id: "images",   label: "Images"   },
-  { id: "media",    label: "Media"    },
-  { id: "docs",     label: "Docs"     },
+const TYPES: { id: TypeFilter; label: string }[] = [
+  { id: "all", label: "All types" },
+  { id: "folders", label: "Folders" },
+  { id: "code", label: "Code" },
+  { id: "images", label: "Images" },
+  { id: "media", label: "Audio & video" },
+  { id: "docs", label: "Documents" },
   { id: "archives", label: "Archives" },
 ];
 
@@ -18,103 +17,60 @@ interface Props {
   onChange: (v: string) => void;
   matchCount: number;
   totalCount: number;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef?: React.RefObject<HTMLInputElement>;
   side: "local" | "remote";
   typeFilter: TypeFilter;
   onTypeFilter: (t: TypeFilter) => void;
-  regexMode: boolean;
-  onRegexToggle: () => void;
+  regexMode?: boolean;
+  onRegexToggle?: () => void;
 }
 
-export function PaneSearchBar({
-  value, onChange, matchCount, totalCount,
-  inputRef, side, typeFilter, onTypeFilter,
-  regexMode, onRegexToggle,
-}: Props) {
-  const [focused, setFocused] = useState(false);
-  const isFiltering = value.trim() !== "" || typeFilter !== "all";
-  const isCyan   = side === "local";
-
-  const focusRing = focused
-    ? isCyan
-      ? "border-pylon-cyan/40 bg-void-800 shadow-[0_0_14px_rgba(0,229,255,0.1)]"
-      : "border-pylon-violet/40 bg-void-800 shadow-[0_0_14px_rgba(180,77,255,0.1)]"
-    : "border-void-600/60 bg-void-850 hover:border-void-500";
-
-  const chipActive = isCyan
-    ? "bg-pylon-cyan/12 border-pylon-cyan/35 text-pylon-cyan"
-    : "bg-pylon-violet/12 border-pylon-violet/35 text-pylon-violet";
-
-  const countColor = isCyan ? "text-pylon-cyan/75" : "text-pylon-violet/75";
-  const iconColor  = focused
-    ? isCyan ? "text-pylon-cyan" : "text-pylon-violet"
-    : "text-slate-600";
-
+export function PaneSearchBar({ value, onChange, matchCount, totalCount, inputRef, typeFilter, onTypeFilter, regexMode, onRegexToggle }: Props) {
+  const filtering = value.trim() !== "" || typeFilter !== "all";
+  let badRegex = false;
+  if (regexMode && value) {
+    try { new RegExp(value); } catch { badRegex = true; }
+  }
   return (
-    <div className="bg-void-900 border-b border-void-600 px-2 pt-1.5 pb-1">
-      <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md border transition-all duration-150 ${focusRing}`}>
-        <Search size={11} className={`shrink-0 transition-colors ${iconColor}`} />
-
+    <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-void-600 px-2">
+      <div className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border bg-void-950/40 px-2 ${badRegex ? "border-pylon-red/60" : "border-void-600 focus-within:border-pylon-cyan/60"}`}>
+        <Search size={13} className="shrink-0 text-slate-500" />
         <input
           ref={inputRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
             if (e.key === "Escape") { onChange(""); onTypeFilter("all"); e.currentTarget.blur(); }
+            if (e.key === "ArrowDown" || e.key === "Enter") e.currentTarget.blur();
           }}
-          placeholder={focused ? "Search files…" : "Search  ·  Ctrl+F"}
-          className="flex-1 min-w-0 bg-transparent text-xs text-slate-200 placeholder-slate-600 outline-none"
+          placeholder={regexMode ? "Filter (regular expression)" : "Filter"}
           spellCheck={false}
+          className="h-full min-w-0 flex-1 bg-transparent text-xs text-slate-200 outline-none"
         />
-
-        {isFiltering && (
-          <span className={`text-[10px] font-mono font-semibold shrink-0 tabular-nums ${countColor}`}>
-            {matchCount}<span className="opacity-40">/</span>{totalCount}
-          </span>
-        )}
-
-        <button
-          onClick={onRegexToggle}
-          title={regexMode ? "Regex on — click to disable" : "Enable regex mode"}
-          className={`p-0.5 rounded transition-colors shrink-0 ${
-            regexMode
-              ? isCyan
-                ? "bg-pylon-cyan/12 text-pylon-cyan"
-                : "bg-pylon-violet/12 text-pylon-violet"
-              : "text-slate-600 hover:text-slate-400"
-          }`}
-        >
-          <Regex size={10} />
-        </button>
-
+        {filtering && <span className="tabular shrink-0 text-[11px] text-slate-500">{matchCount}/{totalCount}</span>}
         {value && (
+          <button onClick={() => onChange("")} className="shrink-0 rounded p-0.5 text-slate-500 hover:text-slate-200" title="Clear">
+            <X size={12} />
+          </button>
+        )}
+        {onRegexToggle && (
           <button
-            onClick={() => onChange("")}
-            className="text-slate-600 hover:text-slate-300 transition-colors shrink-0"
-            title="Clear search"
+            onClick={onRegexToggle}
+            title="Regular expression"
+            className={`shrink-0 rounded px-1 font-mono text-[11px] ${regexMode ? "bg-pylon-cyan/15 text-pylon-cyan" : "text-slate-500 hover:text-slate-300"}`}
           >
-            <X size={11} />
+            .*
           </button>
         )}
       </div>
-
-      <div className="flex items-center gap-1 mt-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-        {CHIPS.map((chip) => (
-          <button
-            key={chip.id}
-            onClick={() => onTypeFilter(chip.id === typeFilter ? "all" : chip.id)}
-            className={`px-2 py-px rounded text-[10px] font-medium whitespace-nowrap transition-all shrink-0 border ${
-              typeFilter === chip.id
-                ? chipActive
-                : "bg-transparent border-transparent text-slate-600 hover:text-slate-300"
-            }`}
-          >
-            {chip.label}
-          </button>
-        ))}
-      </div>
+      <select
+        value={typeFilter}
+        onChange={(e) => onTypeFilter(e.target.value as TypeFilter)}
+        className={`h-7 shrink-0 rounded-md text-xs ${typeFilter !== "all" ? "!border-pylon-cyan/50 text-pylon-cyan" : ""}`}
+        title="Filter by type"
+      >
+        {TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
     </div>
   );
 }

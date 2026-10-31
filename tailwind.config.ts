@@ -1,56 +1,79 @@
 import type { Config } from "tailwindcss";
 
+const v = (name: string) => `rgb(var(--${name}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
         void: {
-          950: "#03040a",
-          900: "#07090f",
-          800: "#0d1018",
-          700: "#131720",
-          600: "#1a2030",
-          500: "#222840",
+          950: v("void-950"),
+          900: v("void-900"),
+          800: v("void-800"),
+          700: v("void-700"),
+          600: v("void-600"),
+          500: v("void-500"),
+          400: v("void-400"),
+        },
+        slate: {
+          50: v("ink-50"),
+          100: v("ink-100"),
+          200: v("ink-200"),
+          300: v("ink-300"),
+          400: v("ink-400"),
+          500: v("ink-500"),
+          600: v("ink-600"),
+          700: v("ink-700"),
+          800: v("ink-800"),
+          900: v("ink-900"),
         },
         pylon: {
-          cyan: "#00e5ff",
-          "cyan-dim": "#00b8cc",
-          violet: "#b44dff",
-          "violet-dim": "#8c3acc",
-          amber: "#ffaa00",
-          "amber-dim": "#cc8800",
-          green: "#00ff9d",
-          red: "#ff4560",
+          cyan: v("accent"),
+          "cyan-dim": v("accent-dim"),
+          violet: v("remote"),
+          "violet-dim": v("remote"),
+          amber: v("warn"),
+          "amber-dim": v("warn"),
+          green: v("ok"),
+          red: v("danger"),
         },
+        accent: v("accent"),
+        "on-accent": v("on-accent"),
+      },
+      opacity: {
+        3: "0.03",
+        4: "0.04",
+        6: "0.06",
+        8: "0.08",
+        12: "0.12",
+        35: "0.35",
+        45: "0.45",
+        65: "0.65",
+        85: "0.85",
       },
       fontFamily: {
-        mono: ["JetBrains Mono", "Fira Code", "Cascadia Code", "monospace"],
-        sans: ["Inter", "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', '"Cascadia Code"', '"SF Mono"', "Menlo", "Consolas", "monospace"],
+        sans: ['"Inter Variable"', "Inter", "system-ui", "-apple-system", '"Segoe UI"', "sans-serif"],
+      },
+      fontSize: {
+        "2xs": ["10.5px", { lineHeight: "14px" }],
       },
       boxShadow: {
-        "pylon-cyan": "0 0 20px rgba(0,229,255,0.3), 0 0 60px rgba(0,229,255,0.1)",
-        "pylon-violet": "0 0 20px rgba(180,77,255,0.3), 0 0 60px rgba(180,77,255,0.1)",
-        "pylon-amber": "0 0 20px rgba(255,170,0,0.3), 0 0 60px rgba(255,170,0,0.1)",
-      },
-      animation: {
-        "pylon-pulse": "pylonPulse 2s ease-in-out infinite",
-        "data-flow": "dataFlow 1.5s linear infinite",
-        "glow-cyan": "glowCyan 3s ease-in-out infinite",
+        popover: "0 12px 32px -8px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(var(--void-500) / 0.6)",
+        modal: "0 24px 64px -12px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(var(--void-500) / 0.7)",
+        "pylon-cyan": "0 0 0 1px rgb(var(--accent) / 0.35)",
+        "pylon-violet": "0 0 0 1px rgb(var(--remote) / 0.35)",
+        "pylon-amber": "0 0 0 1px rgb(var(--warn) / 0.35)",
       },
       keyframes: {
-        pylonPulse: {
-          "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0.5" },
+        indeterminate: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(250%)" },
         },
-        dataFlow: {
-          "0%": { transform: "translateY(-100%)" },
-          "100%": { transform: "translateY(100%)" },
-        },
-        glowCyan: {
-          "0%, 100%": { boxShadow: "0 0 20px rgba(0,229,255,0.3)" },
-          "50%": { boxShadow: "0 0 40px rgba(0,229,255,0.6), 0 0 80px rgba(0,229,255,0.2)" },
-        },
+      },
+      animation: {
+        indeterminate: "indeterminate 1.1s ease-in-out infinite",
       },
     },
   },

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { useConfirm } from "../ui/ConfirmDialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -133,14 +135,13 @@ function SecurityTab({ s }: SecurityTabProps) {
   }
 
   const HOST_KEY_OPTS: { value: HostKeyPolicy; label: string; desc: string; icon: React.ReactNode; danger?: boolean }[] = [
-    { value: "ask",         label: "Ask",         desc: "Prompt when host is unknown",   icon: <HelpCircle size={13} /> },
-    { value: "auto-accept", label: "Auto Accept", desc: "Trust all servers (insecure)",  icon: <Wifi size={13} />, danger: true },
-    { value: "strict",      label: "Strict",      desc: "Reject all unknown keys",       icon: <Shield size={13} /> },
+    { value: "ask",         label: "Ask",         desc: "Show the fingerprint for unknown hosts", icon: <HelpCircle size={13} /> },
+    { value: "auto-accept", label: "Accept new", desc: "Trust unknown hosts automatically; changed keys still ask", icon: <Wifi size={13} />, danger: true },
+    { value: "strict",      label: "Strict",      desc: "Only hosts already in known_hosts", icon: <Shield size={13} /> },
   ];
 
   return (
     <div className="space-y-4 max-w-xl">
-      {}
       <Card>
         <CardHeader icon={<Database size={14} />} title="ZVault" sub="Credential store settings" />
         <Row label="Auto-lock timeout" sub="Lock ZVault after N minutes of idle (0 = never)" last>
@@ -155,7 +156,6 @@ function SecurityTab({ s }: SecurityTabProps) {
         </div>
       </Card>
 
-      {}
       <Card>
         <CardHeader icon={<Key size={14} />} title="Host Key Policy" sub="How to handle unrecognized SSH server fingerprints" />
         <div className="p-3 grid grid-cols-3 gap-2">
@@ -175,11 +175,6 @@ function SecurityTab({ s }: SecurityTabProps) {
                   <span className="text-xs font-semibold">{opt.label}</span>
                 </div>
                 <p className="text-[10px] text-slate-500 leading-relaxed">{opt.desc}</p>
-                {active && (
-                  <span className={`text-[9px] font-bold tracking-widest uppercase ${opt.danger ? "text-pylon-red/60" : "text-pylon-cyan/60"}`}>
-                    ● Active
-                  </span>
-                )}
               </button>
             );
           })}
@@ -189,13 +184,12 @@ function SecurityTab({ s }: SecurityTabProps) {
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
               className="mx-3 mb-3 px-3 py-2 rounded-lg bg-pylon-red/5 border border-pylon-red/20 flex items-center gap-2">
               <AlertTriangle size={11} className="text-pylon-red shrink-0" />
-              <p className="text-xs text-pylon-red/80">Auto-accept disables MITM protection. Use only on trusted private networks.</p>
+              <p className="text-xs text-pylon-red/80">New hosts are trusted without checking their fingerprint. Only use this on networks you control.</p>
             </motion.div>
           )}
         </AnimatePresence>
       </Card>
 
-      {}
       <Card>
         <div className="flex items-center justify-between px-5 py-4 border-b border-void-600/40">
           <div className="flex items-center gap-3">
@@ -258,20 +252,23 @@ function SecurityTab({ s }: SecurityTabProps) {
 type Tab = "snippets" | "transfers" | "terminal" | "security" | "appearance" | "general" | "about";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "snippets",   label: "Snippets",   icon: <Zap size={13} /> },
-  { id: "transfers",  label: "Transfers",  icon: <Activity size={13} /> },
-  { id: "terminal",   label: "Terminal",   icon: <TermIcon size={13} /> },
-  { id: "security",   label: "Security",   icon: <Shield size={13} /> },
-  { id: "appearance", label: "Appearance", icon: <Palette size={13} /> },
-  { id: "general",    label: "General",    icon: <Globe size={13} /> },
-  { id: "about",      label: "About",      icon: <Info size={13} /> },
+  { id: "general",    label: "General",    icon: <Globe size={14} /> },
+  { id: "appearance", label: "Appearance", icon: <Palette size={14} /> },
+  { id: "terminal",   label: "Terminal",   icon: <TermIcon size={14} /> },
+  { id: "transfers",  label: "Transfers",  icon: <Activity size={14} /> },
+  { id: "security",   label: "Security",   icon: <Shield size={14} /> },
+  { id: "snippets",   label: "Snippets",   icon: <Zap size={14} /> },
+  { id: "about",      label: "About",      icon: <Info size={14} /> },
 ];
 
 const INPUT = "w-full bg-void-900 border border-void-600 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-pylon-cyan/50 transition-colors";
 const MONO_INPUT = `${INPUT} font-mono text-xs`;
 
 export function SettingsPanel() {
-  const [tab, setTab] = useState<Tab>("snippets");
+  const [tab, setTab] = useState<Tab>("general");
+  const confirmDialog = useConfirm();
+  const [version, setVersion] = useState("");
+  useEffect(() => { getVersion().then(setVersion).catch(() => {}); }, []);
   const { snippets, addSnippet, removeSnippet } = useSnippets();
   const [newLabel, setNewLabel] = useState("");
   const [newCmd, setNewCmd] = useState("");
@@ -286,48 +283,49 @@ export function SettingsPanel() {
   }
 
   const THEMES: { id: ThemeName; label: string; accent: string; bg: string; sidebar: string; desc: string }[] = [
-    { id: "deep-void", label: "Deep Void",  accent: "#00e5ff", bg: "#07090f", sidebar: "#0d1018", desc: "Cyan / Black" },
-    { id: "night",     label: "Night",      accent: "#b44dff", bg: "#0d1117", sidebar: "#131720", desc: "Violet / Dark" },
-    { id: "soft-void", label: "Soft Void",  accent: "#38bdf8", bg: "#0f172a", sidebar: "#1e2a3d", desc: "Sky Blue" },
-    { id: "neon",      label: "Neon",       accent: "#00ff9d", bg: "#020d06", sidebar: "#04130a", desc: "Matrix Green" },
-    { id: "amber",     label: "Amber",      accent: "#f59e0b", bg: "#0c0a04", sidebar: "#160f04", desc: "Gold / Dark" },
-    { id: "rose",      label: "Rose",       accent: "#f43f5e", bg: "#0c0205", sidebar: "#160208", desc: "Crimson Edge" },
-    { id: "forest",    label: "Forest",     accent: "#10b981", bg: "#020b06", sidebar: "#04130a", desc: "Emerald Deep" },
+    { id: "deep-void", label: "Deep Void", accent: "#22d3ee", bg: "#0a0b0e", sidebar: "#0f1115", desc: "Cyan" },
+    { id: "night", label: "Night", accent: "#a78bfa", bg: "#0d1117", sidebar: "#11161d", desc: "Violet" },
+    { id: "soft-void", label: "Soft Void", accent: "#38bdf8", bg: "#0f172a", sidebar: "#131c31", desc: "Sky blue" },
+    { id: "neon", label: "Neon", accent: "#4ade80", bg: "#060b09", sidebar: "#090f0c", desc: "Green" },
+    { id: "amber", label: "Amber", accent: "#f5a623", bg: "#0d0b08", sidebar: "#120f0b", desc: "Gold" },
+    { id: "rose", label: "Rose", accent: "#fb7185", bg: "#0e0a0c", sidebar: "#130e10", desc: "Pink" },
+    { id: "forest", label: "Forest", accent: "#2dd4bf", bg: "#080c0b", sidebar: "#0b110f", desc: "Teal" },
   ];
 
   const CHUNK_PRESETS = [
     { label: "64 KB", value: 64 },
-    { label: "128", value: 128 },
-    { label: "256", value: 256 },
+    { label: "128 KB", value: 128 },
+    { label: "256 KB", value: 256 },
     { label: "512 KB", value: 512 },
     { label: "1 MB", value: 1024 },
     { label: "2 MB", value: 2048 },
   ];
 
   const SHELL_OPTS: { path: DefaultShell; label: string; desc: string }[] = [
-    { path: "/bin/bash", label: "bash",  desc: "Bourne Again Shell" },
-    { path: "/bin/zsh",  label: "zsh",   desc: "Z Shell" },
-    { path: "/bin/sh",   label: "sh",    desc: "POSIX Shell" },
-    { path: "/bin/fish", label: "fish",  desc: "Friendly Shell" },
+    { path: "",     label: "Login shell", desc: "Whatever the account uses" },
+    { path: "bash", label: "bash", desc: "If installed" },
+    { path: "zsh",  label: "zsh",  desc: "If installed" },
+    { path: "fish", label: "fish", desc: "If installed" },
+    { path: "sh",   label: "sh",   desc: "POSIX shell" },
   ];
 
   const FONT_PRESETS = [
-    "JetBrains Mono, monospace",
-    "Fira Code, monospace",
-    "Cascadia Code, monospace",
+    '"JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace',
+    '"Fira Code", monospace',
+    '"Cascadia Code", Consolas, monospace',
+    'Menlo, Monaco, monospace',
     "monospace",
   ];
 
   return (
     <div className="flex h-full bg-void-900">
-      {}
       <div className="w-36 border-r border-void-600/60 flex flex-col py-3 shrink-0 bg-void-950/50">
         <div className="flex items-center gap-2 px-3 pb-3 border-b border-void-600/40 mb-1">
           <Settings size={12} className="text-pylon-cyan" />
           <span className="text-xs font-bold text-slate-300 tracking-wide">Settings</span>
         </div>
         <div className="px-3 pb-3 border-b border-void-600/30 mb-2">
-          <span className="text-[10px] text-pylon-green/60 font-mono tracking-wide">● auto-saves</span>
+          <span className="text-[11px] text-slate-500">Changes save automatically</span>
         </div>
         {TABS.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
@@ -342,10 +340,8 @@ export function SettingsPanel() {
         ))}
       </div>
 
-      {}
       <div className="flex-1 overflow-y-auto p-6">
 
-        {}
         {tab === "snippets" && (
           <div className="space-y-4 max-w-2xl">
             <div>
@@ -353,7 +349,6 @@ export function SettingsPanel() {
               <p className="text-xs text-slate-500 mt-0.5">One-click terminal commands, saved across sessions</p>
             </div>
 
-            {}
             <div className="flex gap-3 px-4 py-3 bg-pylon-cyan/4 border border-pylon-cyan/15 rounded-xl">
               <Zap size={14} className="text-pylon-cyan shrink-0 mt-0.5" />
               <div className="text-xs text-slate-400 space-y-1">
@@ -362,7 +357,6 @@ export function SettingsPanel() {
               </div>
             </div>
 
-            {}
             <Card>
               <CardHeader icon={<Plus size={14} />} title="New Snippet" />
               <div className="p-4 space-y-3">
@@ -400,7 +394,6 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <div className="space-y-1.5">
               {snippets.length === 0 && (
                 <div className="flex flex-col items-center gap-2 py-10 text-slate-600">
@@ -426,7 +419,6 @@ export function SettingsPanel() {
           </div>
         )}
 
-        {}
         {tab === "transfers" && (
           <div className="space-y-4 max-w-xl">
             <div>
@@ -434,7 +426,6 @@ export function SettingsPanel() {
               <p className="text-xs text-slate-500 mt-0.5">Control parallelism, speed, and transfer behavior</p>
             </div>
 
-            {}
             <Card>
               <CardHeader icon={<Cpu size={14} />} title="Parallelism" sub="Simultaneous file transfers per session" />
               <div className="px-5 py-4 space-y-3">
@@ -457,7 +448,6 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Gauge size={14} />} title="Performance" sub="Chunk size and bandwidth throttle" />
               <div className="px-5 py-4 space-y-4 border-b border-void-600/30">
@@ -501,11 +491,10 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Layers size={14} />} title="Behavior" />
-              <Row label="Auto SHA-256 verification" sub="Post-transfer SHA-256 verification — coming soon">
-                <Toggle checked={s.autoVerifyChecksum} onChange={(v) => s.set("autoVerifyChecksum", v)} disabled />
+              <Row label="Auto SHA-256 verification" sub="Compare with sha256sum on the server after each transfer of 1 MB or more">
+                <Toggle checked={s.autoVerifyChecksum} onChange={(v) => s.set("autoVerifyChecksum", v)} />
               </Row>
               <Row label="Strip metadata by default" sub="Applies to manual uploads via the Files tab (drag-drop and context menu)" last>
                 <Toggle checked={s.autoStripMetadata} onChange={(v) => s.set("autoStripMetadata", v)} />
@@ -514,7 +503,6 @@ export function SettingsPanel() {
           </div>
         )}
 
-        {}
         {tab === "terminal" && (
           <div className="space-y-4 max-w-xl">
             <div>
@@ -522,16 +510,7 @@ export function SettingsPanel() {
               <p className="text-xs text-slate-500 mt-0.5">Font, shell, and behavior settings for xterm.js</p>
             </div>
 
-            {}
             <Card>
-              <div className="flex items-center justify-between px-4 py-2 border-b border-void-600/30 bg-void-900/40">
-                <div className="flex gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-pylon-red/40" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-pylon-amber/40" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-pylon-green/40" />
-                </div>
-                <span className="text-[10px] text-slate-600">preview</span>
-              </div>
               <div className="px-4 py-4 bg-void-950 font-mono leading-relaxed"
                 style={{ fontFamily: s.termFontFamily, fontSize: `${s.termFontSize}px` }}>
                 <p className="text-pylon-cyan">user<span className="text-slate-500">@</span>server<span className="text-slate-500">:~$</span> <span className="text-slate-200">ls -la</span></p>
@@ -541,7 +520,6 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Type size={14} />} title="Font" />
               <div className="px-5 pt-4 pb-2 border-b border-void-600/25">
@@ -569,7 +547,7 @@ export function SettingsPanel() {
                           ? "border-pylon-cyan/50 bg-pylon-cyan/10 text-pylon-cyan"
                           : "border-void-600/60 text-slate-500 hover:text-slate-300 hover:border-void-500"
                       }`}>
-                      {f.split(",")[0].trim()}
+                      {f.split(",")[0].replace(/"/g, "").trim()}
                     </button>
                   ))}
                 </div>
@@ -578,10 +556,9 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Code2 size={14} />} title="Shell" sub="Default shell launched when opening a terminal tab" />
-              <div className="p-3 grid grid-cols-4 gap-2">
+              <div className="p-3 grid grid-cols-5 gap-2">
                 {SHELL_OPTS.map((sh) => {
                   const active = s.defaultShell === sh.path;
                   return (
@@ -591,13 +568,15 @@ export function SettingsPanel() {
                           ? "border-pylon-cyan/40 bg-pylon-cyan/5 text-pylon-cyan"
                           : "border-void-600/50 hover:border-void-500 text-slate-400 hover:text-slate-300 bg-void-900/20"
                       }`}>
-                      <span className="text-sm font-mono font-semibold">{sh.label}</span>
-                      <span className="text-[10px] text-slate-500">{sh.desc}</span>
-                      {active && <span className="text-[9px] font-bold tracking-widest uppercase text-pylon-cyan/60">● Default</span>}
+                      <span className={`text-[13px] font-medium ${sh.path ? "font-mono" : ""}`}>{sh.label}</span>
+                      <span className="text-[11px] text-slate-500">{sh.desc}</span>
                     </button>
                   );
                 })}
               </div>
+              <Row label="Follow the file browser" sub="Navigating the remote pane sends a cd to the active terminal">
+                <Toggle checked={s.terminalFollowsBrowser} onChange={(v) => s.set("terminalFollowsBrowser", v)} />
+              </Row>
               <Row label="Scrollback buffer" sub="Lines of history kept per terminal session" last>
                 <NumericInput value={s.termScrollback} min={500} max={100000} unit="lines"
                   onChange={(v) => s.set("termScrollback", v)} />
@@ -606,10 +585,8 @@ export function SettingsPanel() {
           </div>
         )}
 
-        {}
         {tab === "security" && <SecurityTab s={s} />}
 
-        {}
         {tab === "appearance" && (
           <div className="space-y-5 max-w-2xl">
             <div>
@@ -617,7 +594,6 @@ export function SettingsPanel() {
               <p className="text-xs text-slate-500 mt-0.5">Theme, layout, and visual preferences</p>
             </div>
 
-            {}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Color Theme</p>
               <div className="grid grid-cols-4 gap-2.5">
@@ -625,23 +601,18 @@ export function SettingsPanel() {
                   const active = s.theme === t.id;
                   return (
                     <button key={t.id} onClick={() => s.set("theme", t.id)}
-                      className={`relative flex flex-col rounded-xl border-2 overflow-hidden transition-all hover:scale-[1.02] ${
-                        active ? "scale-[1.02] shadow-lg" : "hover:border-void-500"
-                      }`}
+                      className={`relative flex flex-col overflow-hidden rounded-lg border transition-colors ${active ? "" : "hover:!border-void-400"}`}
                       style={{
-                        borderColor: active ? t.accent + "70" : "#1a2030",
-                        boxShadow: active ? `0 0 20px ${t.accent}20` : undefined,
+                        borderColor: active ? t.accent : "rgb(var(--void-600))",
+                        boxShadow: active ? `0 0 0 1px ${t.accent}` : undefined,
                       }}>
-                      {}
                       <div className="h-20 w-full relative overflow-hidden" style={{ background: t.bg }}>
-                        {}
                         <div className="absolute left-0 top-0 bottom-0 w-7 flex flex-col gap-1 py-2 px-1" style={{ background: t.sidebar }}>
                           <div className="h-1.5 rounded-sm mx-0.5" style={{ background: t.accent + "70" }} />
                           <div className="h-1 rounded-sm mx-0.5 bg-white/10" />
                           <div className="h-1 rounded-sm mx-0.5 bg-white/10" />
                           <div className="h-1 rounded-sm mx-0.5 bg-white/10" />
                         </div>
-                        {}
                         <div className="absolute left-8 right-1 top-2 bottom-2 flex flex-col gap-1">
                           <div className="h-1.5 rounded-sm" style={{ background: t.accent + "80", width: "75%" }} />
                           <div className="h-1 rounded-sm bg-white/8 w-full" />
@@ -649,13 +620,11 @@ export function SettingsPanel() {
                           <div className="h-1 rounded-sm" style={{ background: t.accent + "40", width: "45%" }} />
                           <div className="h-1 rounded-sm bg-white/8 w-full" />
                         </div>
-                        {}
                         <div className="absolute bottom-0 left-0 right-0 h-3 flex items-center px-2 gap-1" style={{ background: t.sidebar }}>
                           <div className="w-1.5 h-1.5 rounded-full" style={{ background: t.accent }} />
                           <div className="h-0.5 rounded-sm flex-1 bg-white/10" />
                         </div>
                       </div>
-                      {}
                       <div className="px-3 py-2 text-left bg-void-800">
                         <p className="text-[11px] font-semibold text-slate-200 leading-none">{t.label}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5">{t.desc}</p>
@@ -670,21 +639,9 @@ export function SettingsPanel() {
                   );
                 })}
 
-                {}
-                <div className="flex flex-col rounded-xl border-2 border-void-700/30 overflow-hidden opacity-35 cursor-not-allowed">
-                  <div className="h-20 bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col justify-end p-2 gap-1">
-                    <div className="h-1.5 rounded-sm bg-blue-400 w-3/4" />
-                    <div className="h-1 rounded-sm bg-black/15 w-full" />
-                  </div>
-                  <div className="px-3 py-2 bg-slate-50">
-                    <p className="text-[11px] font-semibold text-slate-600">Light</p>
-                    <p className="text-[10px] text-slate-400">Coming soon</p>
-                  </div>
-                </div>
               </div>
             </div>
 
-            {}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Layout</p>
               <Card>
@@ -702,23 +659,12 @@ export function SettingsPanel() {
                         onChange={(v) => s.set("sidebarWidth", v)} />
                     </div>
                   </div>
-                  {}
-                  <div className="relative h-5 bg-void-900 rounded-lg border border-void-600/40 overflow-hidden">
-                    <motion.div className="absolute left-0 top-0 bottom-0 bg-pylon-cyan/20 border-r border-pylon-cyan/30"
-                      animate={{ width: `${((s.sidebarWidth - 140) / (400 - 140)) * 60 + 10}%` }}
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    />
-                    <div className="absolute inset-0 flex items-center px-2">
-                      <span className="text-[9px] text-pylon-cyan/70 font-mono">{s.sidebarWidth}px</span>
-                    </div>
-                  </div>
                 </div>
               </Card>
             </div>
           </div>
         )}
 
-        {}
         {tab === "general" && (
           <div className="space-y-4 max-w-xl">
             <div>
@@ -738,24 +684,25 @@ export function SettingsPanel() {
 
             <Card>
               <CardHeader icon={<Server size={14} />} title="Connection" />
-              <Row label="Auto-reconnect" sub="Re-open a session automatically if the connection drops" last>
+              <Row label="Auto-reconnect" sub="Reconnect ZVault sessions automatically if the connection drops">
                 <Toggle checked={s.autoReconnect} onChange={(v) => s.set("autoReconnect", v)} />
+              </Row>
+              <Row label="Confirm before deleting" sub="Ask before deleting local or remote files" last>
+                <Toggle checked={s.confirmDeletes} onChange={(v) => s.set("confirmDeletes", v)} />
               </Row>
             </Card>
 
             <div className="pt-2">
-              <button onClick={() => { if (confirm("Reset all settings to their defaults?")) s.reset(); }}
-                className="px-4 py-2 rounded-lg bg-red-900/15 border border-red-900/40 text-red-400/80 text-xs hover:bg-red-900/25 hover:text-red-400 transition-colors">
+              <button onClick={async () => { if (await confirmDialog({ title: "Reset all settings?", message: "Every preference returns to its default. Saved servers, bookmarks and the vault are not affected.", confirmLabel: "Reset", danger: true })) s.reset(); }}
+                className="px-3 py-1.5 rounded-md border border-pylon-red/35 text-pylon-red text-xs hover:bg-pylon-red/10 transition-colors">
                 Reset all settings to defaults
               </button>
             </div>
           </div>
         )}
 
-        {}
         {tab === "about" && (
           <div className="space-y-4 max-w-lg">
-            {}
             <div className="relative overflow-hidden rounded-2xl border border-pylon-cyan/20 p-6"
               style={{ background: "linear-gradient(135deg, #07090f 0%, #0d1520 100%)" }}>
               <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-pylon-cyan/6 blur-2xl pointer-events-none" />
@@ -765,7 +712,7 @@ export function SettingsPanel() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <h1 className="text-xl font-bold text-slate-100 tracking-tight">Pylon</h1>
-                    <span className="px-2 py-0.5 rounded-full bg-pylon-cyan/12 border border-pylon-cyan/25 text-[10px] font-mono text-pylon-cyan tracking-wider">v0.1.0</span>
+                    <span className="px-2 py-0.5 rounded-full bg-pylon-cyan/12 border border-pylon-cyan/25 text-[10px] font-mono text-pylon-cyan tracking-wider">v{version || "…"}</span>
                   </div>
                   <p className="text-sm text-slate-400">Open-source SSH &amp; SFTP client</p>
                   <p className="text-xs text-slate-600 mt-0.5">© 2026 TheHolyOneZ · GPL-3.0</p>
@@ -773,7 +720,6 @@ export function SettingsPanel() {
               </div>
             </div>
 
-            {}
             <Card>
               <CardHeader icon={<Globe size={14} />} title="Links" />
               <div className="divide-y divide-void-600/30">
@@ -794,7 +740,6 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Package size={14} />} title="Stack" />
               <div className="px-5 py-4 flex flex-wrap gap-1.5">
@@ -816,7 +761,6 @@ export function SettingsPanel() {
               </div>
             </Card>
 
-            {}
             <Card>
               <CardHeader icon={<Layers size={14} />} title="Keyboard Shortcuts" />
               <div className="px-5 py-4 grid grid-cols-2 gap-x-6 gap-y-2">

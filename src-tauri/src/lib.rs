@@ -1,5 +1,3 @@
-
-
 pub mod commands;
 pub mod crypto;
 pub mod error;
@@ -8,6 +6,7 @@ pub mod known_hosts;
 pub mod metadata;
 pub mod session;
 pub mod sftp;
+pub mod ssh;
 pub mod ssh_config;
 pub mod terminal;
 pub mod transfer;
@@ -16,17 +15,14 @@ pub mod vault_manager;
 pub mod watcher_store;
 
 use std::path::PathBuf;
-#[cfg(debug_assertions)]
 use tauri::Manager;
 use tracing_subscriber::{fmt, EnvFilter};
 
 pub fn run() {
-    fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive("pylon=debug".parse().unwrap()),
-        )
-        .init();
+    let default_level = if cfg!(debug_assertions) { "pylon_lib=debug" } else { "pylon_lib=info" };
+    let _ = fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)))
+        .try_init();
 
     let data_dir: PathBuf = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -38,8 +34,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(session::SessionRegistry::new())
         .manage(transfer::TransferRegistry::new())
         .manage(terminal::TerminalRegistry::new())
@@ -48,7 +44,6 @@ pub fn run() {
         .manage(suspended_registry)
         .manage(vault_manager::VaultManager::new(data_dir))
         .invoke_handler(tauri::generate_handler![
-
             commands::connection::connect,
             commands::connection::accept_host_key_and_connect,
             commands::connection::disconnect,
@@ -56,6 +51,8 @@ pub fn run() {
             commands::connection::test_connection,
             commands::connection::get_connection_status,
             commands::connection::list_ssh_config_hosts,
+            commands::sftp::remote_path_exists,
+            commands::sftp::remote_paths_exist,
 
             commands::sftp::list_remote_dir,
             commands::sftp::read_remote_file,
@@ -80,6 +77,8 @@ pub fn run() {
             commands::transfer::upload_directory,
             commands::transfer::download_directory,
             commands::transfer::cancel_transfer,
+            commands::transfer::cancel_batch,
+            commands::transfer::clear_finished_transfers,
             commands::transfer::pause_transfer,
             commands::transfer::resume_transfer_cmd,
             commands::transfer::set_transfer_rate_limit,
@@ -111,6 +110,9 @@ pub fn run() {
             commands::vault::vault_create_profile,
             commands::vault::vault_delete_profile,
             commands::vault::vault_rename_profile,
+            commands::vault::vault_exists,
+            commands::vault::vault_create,
+            commands::vault::vault_change_passphrase,
             commands::vault::vault_unlock,
             commands::vault::vault_lock,
             commands::vault::vault_reset,
@@ -132,6 +134,13 @@ pub fn run() {
             commands::local_fs::local_path_exists,
             commands::local_fs::delete_local_path,
             commands::local_fs::delete_local_batch,
+            commands::local_fs::local_paths_exist,
+            commands::local_fs::local_is_dir,
+            commands::local_fs::create_local_dir,
+            commands::local_fs::rename_local,
+            commands::local_fs::reveal_in_file_manager,
+            commands::local_fs::read_text_file,
+            commands::local_fs::move_local,
 
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
@@ -139,13 +148,22 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window("main") {
-                window.open_devtools();
+            if std::env::var_os("PYLON_DEVTOOLS").is_some() {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
-            #[cfg(not(debug_assertions))]
             let _ = app;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Pylon failed to start");
+        .build(tauri::generate_context!())
+        .expect("Pylon failed to start")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                let reg = app.state::<session::SessionRegistry>();
+                for info in reg.list_infos() {
+                    reg.remove(&info.id);
+                }
+            }
+        });
 }

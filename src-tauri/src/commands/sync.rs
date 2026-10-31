@@ -1,6 +1,7 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+use super::blocking;
 use crate::{
     error::PylonError,
     fs_watcher::{SyncConfig, SyncRule, WatcherRegistry},
@@ -8,16 +9,16 @@ use crate::{
     watcher_store::{PersistedWatcherConfig, SuspendedWatcherRegistry, WatcherStore},
 };
 
-fn sync_config_to_persisted(c: &SyncConfig) -> PersistedWatcherConfig {
-    PersistedWatcherConfig::from(c)
+fn persist(app: &AppHandle, id: &str) {
+    if let Some(config) = app.state::<WatcherRegistry>().get_config(id) {
+        let _ = app.state::<WatcherStore>().save(&PersistedWatcherConfig::from(&config));
+    }
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_sync(
     app: AppHandle,
-    session_registry: State<'_, SessionRegistry>,
-    watcher_registry: State<'_, WatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
     session_id: String,
     local_root: String,
     remote_root: String,
@@ -27,163 +28,121 @@ pub async fn start_sync(
     mirror_permissions: bool,
     exclude_patterns: Vec<String>,
     rule: Option<SyncRule>,
-
     protected_patterns: Option<Vec<String>>,
     dry_run: Option<bool>,
     max_file_size_kb: Option<u64>,
     sync_deletes: Option<bool>,
     initial_sync_only: Option<bool>,
+    keep_on_disconnect: Option<bool>,
+    replace_id: Option<String>,
 ) -> Result<SyncConfig, PylonError> {
-    let (expected_host, expected_port, from_vault, expected_fingerprint) = session_registry
-        .get_info(&session_id)
-        .map(|info| (
-            info.host,
-            info.port,
-            info.from_vault,
-            info.server_fingerprint.unwrap_or_default(),
-        ))
-        .unwrap_or_default();
-
-    if !from_vault {
-        return Err(PylonError::PermissionDenied(
-            "Sync watchers require a ZVault connection".into(),
-        ));
-    }
-
-    let credential_id = session_registry
-        .get_credential_id(&session_id)
-        .unwrap_or_default();
-
-    let sess = session_registry.get_session_arc(&session_id)?;
-
-    let config = SyncConfig {
-        id: Uuid::new_v4().to_string(),
-        label,
-        local_root,
-        remote_root,
-        session_id,
-        strip_metadata,
-        active: true,
-        events_processed: 0,
-        bytes_synced: 0,
-        exclude_patterns,
-        preserve_timestamps,
-        mirror_permissions,
-        rule: rule.unwrap_or_default(),
-        from_vault,
-        expected_host,
-        expected_port,
-        keep_on_disconnect: false,
-        credential_id: credential_id.clone(),
-        expected_fingerprint: expected_fingerprint.clone(),
-        protected_patterns: protected_patterns.unwrap_or_default(),
-        dry_run: dry_run.unwrap_or(false),
-        max_file_size_kb,
-        sync_deletes: sync_deletes.unwrap_or(false),
-        initial_sync_only: initial_sync_only.unwrap_or(false),
-    };
-
-    watcher_registry.start(app, config.clone(), sess)?;
-
-    let _ = watcher_store.save(&PersistedWatcherConfig::from(&config));
-
-    Ok(config)
+    blocking(move || {
+        let sessions = app.state::<SessionRegistry>();
+        let info = sessions.get_info(&session_id).ok_or_else(|| PylonError::SessionNotFound(session_id.clone()))?;
+        if !info.from_vault {
+            return Err(PylonError::PermissionDenied(
+                "Sync watchers need a ZVault connection (so they can resume safely after reconnecting)".into(),
+            ));
+        }
+        let conn = sessions.get_conn(&session_id)?;
+        let watchers = app.state::<WatcherRegistry>();
+        let id = match replace_id {
+            Some(old) => {
+                let _ = watchers.stop(&old);
+                old
+            }
+            None => Uuid::new_v4().to_string(),
+        };
+        let config = SyncConfig {
+            id,
+            label: if label.trim().is_empty() { "Sync".into() } else { label.trim().to_string() },
+            local_root: local_root.trim().to_string(),
+            remote_root: remote_root.trim().to_string(),
+            session_id: session_id.clone(),
+            strip_metadata,
+            active: true,
+            events_processed: 0,
+            bytes_synced: 0,
+            exclude_patterns,
+            preserve_timestamps,
+            mirror_permissions,
+            rule: rule.unwrap_or_default(),
+            from_vault: true,
+            expected_host: info.host.clone(),
+            expected_port: info.port,
+            keep_on_disconnect: keep_on_disconnect.unwrap_or(false),
+            credential_id: sessions.get_credential_id(&session_id).unwrap_or_default(),
+            expected_fingerprint: info.server_fingerprint.clone().unwrap_or_default(),
+            protected_patterns: protected_patterns.unwrap_or_default(),
+            dry_run: dry_run.unwrap_or(false),
+            max_file_size_kb,
+            sync_deletes: sync_deletes.unwrap_or(false),
+            initial_sync_only: initial_sync_only.unwrap_or(false),
+            waiting_for_session: false,
+        };
+        watchers.start(app.clone(), config.clone(), conn)?;
+        let config = watchers.get_config(&config.id).unwrap_or(config);
+        let _ = app.state::<WatcherStore>().save(&PersistedWatcherConfig::from(&config));
+        Ok(config)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn update_sync_dry_run(
-    watcher_registry: State<'_, WatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
-    sync_id: String,
-    dry_run: bool,
-) -> Result<(), PylonError> {
-    watcher_registry.update_dry_run(&sync_id, dry_run)?;
-    if let Some(config) = watcher_registry.get_config(&sync_id) {
-        let _ = watcher_store.save(&sync_config_to_persisted(&config));
-    }
+pub async fn update_sync_dry_run(app: AppHandle, sync_id: String, dry_run: bool) -> Result<(), PylonError> {
+    app.state::<WatcherRegistry>().update_dry_run(&sync_id, dry_run)?;
+    persist(&app, &sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_sync(
-    watcher_registry: State<'_, WatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
-    sync_id: String,
-) -> Result<(), PylonError> {
-    watcher_registry.stop(&sync_id)?;
-    let _ = watcher_store.remove(&sync_id);
+pub async fn stop_sync(app: AppHandle, sync_id: String) -> Result<(), PylonError> {
+    let _ = app.state::<WatcherRegistry>().stop(&sync_id);
+    app.state::<SuspendedWatcherRegistry>().remove(&sync_id);
+    let _ = app.state::<WatcherStore>().remove(&sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn list_syncs(
-    watcher_registry: State<'_, WatcherRegistry>,
-) -> Result<Vec<SyncConfig>, PylonError> {
-    Ok(watcher_registry.list())
+pub async fn list_syncs(app: AppHandle) -> Result<Vec<SyncConfig>, PylonError> {
+    Ok(app.state::<WatcherRegistry>().list())
 }
 
 #[tauri::command]
-pub async fn update_sync_config(
-    watcher_registry: State<'_, WatcherRegistry>,
-    sync_id: String,
-    exclude_patterns: Vec<String>,
-    strip_metadata: bool,
-) -> Result<(), PylonError> {
-    watcher_registry.update_config(&sync_id, exclude_patterns, strip_metadata)
-}
-
-#[tauri::command]
-pub async fn update_sync_rule(
-    watcher_registry: State<'_, WatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
-    sync_id: String,
-    rule: SyncRule,
-) -> Result<(), PylonError> {
-    watcher_registry.update_rule(&sync_id, rule)?;
-    if let Some(config) = watcher_registry.get_config(&sync_id) {
-        let _ = watcher_store.save(&sync_config_to_persisted(&config));
-    }
+pub async fn update_sync_config(app: AppHandle, sync_id: String, exclude_patterns: Vec<String>, strip_metadata: bool) -> Result<(), PylonError> {
+    app.state::<WatcherRegistry>().update_config(&sync_id, exclude_patterns, strip_metadata)?;
+    persist(&app, &sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn update_sync_keep_on_disconnect(
-    watcher_registry: State<'_, WatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
-    sync_id: String,
-    keep: bool,
-) -> Result<(), PylonError> {
-    watcher_registry.update_keep_on_disconnect(&sync_id, keep)?;
-    if let Some(config) = watcher_registry.get_config(&sync_id) {
-        let _ = watcher_store.save(&sync_config_to_persisted(&config));
-    }
+pub async fn update_sync_rule(app: AppHandle, sync_id: String, rule: SyncRule) -> Result<(), PylonError> {
+    app.state::<WatcherRegistry>().update_rule(&sync_id, rule)?;
+    persist(&app, &sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_suspended_sync(
-    suspended_registry: State<'_, SuspendedWatcherRegistry>,
-    watcher_store: State<'_, WatcherStore>,
-    sync_id: String,
-) -> Result<(), PylonError> {
-    suspended_registry.remove(&sync_id);
-    let _ = watcher_store.remove(&sync_id);
+pub async fn update_sync_keep_on_disconnect(app: AppHandle, sync_id: String, keep: bool) -> Result<(), PylonError> {
+    app.state::<WatcherRegistry>().update_keep_on_disconnect(&sync_id, keep)?;
+    persist(&app, &sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn confirm_sync_operation(
-    watcher_registry: State<'_, WatcherRegistry>,
-    request_id: String,
-    approved: bool,
-) -> Result<(), PylonError> {
-    watcher_registry.confirm(&request_id, approved);
+pub async fn delete_suspended_sync(app: AppHandle, sync_id: String) -> Result<(), PylonError> {
+    app.state::<SuspendedWatcherRegistry>().remove(&sync_id);
+    let _ = app.state::<WatcherStore>().remove(&sync_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn list_suspended_syncs(
-    suspended_registry: State<'_, SuspendedWatcherRegistry>,
-) -> Result<Vec<PersistedWatcherConfig>, PylonError> {
-    Ok(suspended_registry.list())
+pub async fn confirm_sync_operation(app: AppHandle, request_id: String, approved: bool) -> Result<(), PylonError> {
+    app.state::<WatcherRegistry>().confirm(&request_id, approved);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_suspended_syncs(app: AppHandle) -> Result<Vec<PersistedWatcherConfig>, PylonError> {
+    Ok(app.state::<SuspendedWatcherRegistry>().list())
 }

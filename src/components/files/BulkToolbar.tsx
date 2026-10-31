@@ -1,9 +1,12 @@
-import { Download, Trash2, Upload, X, Shield } from "lucide-react";
 import { motion } from "framer-motion";
+import { Download, Shield, Trash2, Upload, X } from "lucide-react";
+import { Button, IconButton } from "../ui/primitives";
 
 interface Props {
   count: number;
   side: "local" | "remote";
+  canTransfer: boolean;
+  transferTarget: string;
   onUpload?: () => void;
   onUploadClean?: () => void;
   onDownload?: () => void;
@@ -11,62 +14,35 @@ interface Props {
   onDeselect: () => void;
 }
 
-export function BulkToolbar({ count, side, onUpload, onUploadClean, onDownload, onDelete, onDeselect }: Props) {
+export function BulkToolbar({ count, side, canTransfer, transferTarget, onUpload, onUploadClean, onDownload, onDelete, onDeselect }: Props) {
+  const target = transferTarget.split("/").filter(Boolean).pop() || transferTarget;
   return (
     <motion.div
-      initial={{ y: "100%", opacity: 0 }}
+      initial={{ y: 12, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      exit={{ y: "100%", opacity: 0 }}
-      transition={{ type: "spring", stiffness: 500, damping: 35 }}
-      className="sticky bottom-0 left-0 right-0 z-20 backdrop-blur-md"
+      exit={{ y: 12, opacity: 0 }}
+      transition={{ duration: 0.14 }}
+      className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3"
     >
-      <div className="flex items-center gap-2 px-3 py-2 bg-void-900/90 border-t border-pylon-cyan/20 shadow-[0_-4px_20px_rgba(0,229,255,0.06)]">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-pylon-cyan animate-pulse" />
-          <span className="text-xs font-semibold text-pylon-cyan tabular-nums">{count} selected</span>
-        </div>
-        <div className="w-px h-4 bg-void-600 mx-1" />
-
-        {side === "local" && onUpload && (
-          <button
-            onClick={onUpload}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-300 hover:text-slate-100 hover:bg-void-700 transition-colors"
-          >
-            <Upload size={11} /> Upload
-          </button>
+      <div className="pointer-events-auto flex items-center gap-1 rounded-lg bg-void-700 p-1 pl-3 shadow-popover">
+        <span className="tabular mr-2 text-xs font-medium text-slate-200">{count} selected</span>
+        {side === "local" ? (
+          <>
+            <Button size="sm" variant="primary" icon={<Upload size={13} />} onClick={onUpload} disabled={!canTransfer} title={canTransfer ? `Upload to ${transferTarget}` : "Not connected"}>
+              Upload to {target}
+            </Button>
+            <Button size="sm" variant="ghost" icon={<Shield size={13} />} onClick={onUploadClean} disabled={!canTransfer} title="Upload with metadata removed">
+              Clean
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="primary" icon={<Download size={13} />} onClick={onDownload} title={`Download to ${transferTarget}`}>
+            Download to {target}
+          </Button>
         )}
-        {side === "local" && onUploadClean && (
-          <button
-            onClick={onUploadClean}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-pylon-amber hover:bg-pylon-amber/10 transition-colors"
-          >
-            <Shield size={11} /> Clean
-          </button>
-        )}
-        {side === "remote" && onDownload && (
-          <button
-            onClick={onDownload}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-pylon-cyan/80 hover:text-pylon-cyan hover:bg-pylon-cyan/10 transition-colors"
-          >
-            <Download size={11} /> Download
-          </button>
-        )}
-
-        <button
-          onClick={onDelete}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-pylon-red/70 hover:text-pylon-red hover:bg-pylon-red/10 transition-colors"
-        >
-          <Trash2 size={11} /> Delete
-        </button>
-
-        <div className="flex-1" />
-
-        <button
-          onClick={onDeselect}
-          className="p-1 rounded hover:bg-void-700 text-slate-500 hover:text-slate-300 transition-colors"
-        >
-          <X size={12} />
-        </button>
+        <Button size="sm" variant="danger-ghost" icon={<Trash2 size={13} />} onClick={onDelete}>Delete</Button>
+        <div className="mx-0.5 h-4 w-px bg-void-500" />
+        <IconButton onClick={onDeselect} title="Clear selection (Esc)"><X size={14} /></IconButton>
       </div>
     </motion.div>
   );

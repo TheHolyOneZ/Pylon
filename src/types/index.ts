@@ -1,5 +1,3 @@
-
-
 export interface ConnectionInfo {
   id: string;
   label: string;
@@ -8,10 +6,10 @@ export interface ConnectionInfo {
   username: string;
   state: ConnectionState;
   connected_at: string | null;
-  bytes_sent: number;
-  bytes_received: number;
   server_fingerprint: string | null;
   server_key_type: string | null;
+  server_version: string | null;
+  home_dir: string | null;
   from_vault: boolean;
 }
 
@@ -56,9 +54,12 @@ export interface LocalEntry {
   name: string;
   path: string;
   is_dir: boolean;
+  is_symlink: boolean;
   size: number | null;
   modified: number | null;
   extension: string | null;
+  hidden: boolean;
+  permissions: number | null;
 }
 
 export type SortField = "name" | "size" | "modified" | "type";
@@ -72,6 +73,7 @@ export interface SortState {
 export interface TransferRecord {
   id: string;
   session_id: string;
+  batch_id: string | null;
   direction: "upload" | "download";
   local_path: string;
   remote_path: string;
@@ -169,6 +171,7 @@ export interface SyncConfig {
   sync_deletes: boolean;
 
   initial_sync_only: boolean;
+  waiting_for_session?: boolean;
 }
 
 export interface SyncEvent {
@@ -207,6 +210,15 @@ export interface PersistedWatcherConfig {
   max_file_size_kb: number | null;
   sync_deletes: boolean;
   initial_sync_only: boolean;
+}
+
+export interface BatchResult {
+  batch_id: string;
+  ids: string[];
+  total_files: number;
+  failed: number;
+  cancelled: boolean;
+  errors: string[];
 }
 
 export interface MetadataReport {

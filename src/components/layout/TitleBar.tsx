@@ -1,101 +1,111 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, X } from "lucide-react";
+import { Minus, Plus, Search, X } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUiStore } from "../../stores/uiStore";
+import { isMac, modKey } from "../../lib/path";
+import { PylonMark } from "../ui/primitives";
 
 function MaximizeIcon({ maximized }: { maximized: boolean }) {
   return maximized ? (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="1" width="8" height="8" rx="0.5" />
-      <path d="M1 3v7a1 1 0 001 1h7" />
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+      <rect x="3" y="1" width="8" height="8" rx="1" />
+      <path d="M1 3.5v6A1.5 1.5 0 0 0 2.5 11h6" />
     </svg>
   ) : (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="1" width="10" height="10" rx="0.5" />
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+      <rect x="1.5" y="1.5" width="9" height="9" rx="1" />
     </svg>
   );
 }
 
-const winMinimize       = () => invoke("plugin:window|minimize");
-const winToggleMaximize = () => invoke("plugin:window|toggle_maximize");
-const winClose          = () => invoke("plugin:window|close");
-
 export function TitleBar() {
   const { connections, activeSessionId, setActiveSession, disconnectFromServer } = useConnectionStore();
-  const { setActiveTab } = useUiStore();
+  const { setActiveTab, setConnectModal, setCommandPalette, activeTab } = useUiStore();
   const [maximized, setMaximized] = useState(false);
+  const mac = isMac();
 
   useEffect(() => {
     const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
-    win.isMaximized().then(setMaximized);
-    win.onResized(() => win.isMaximized().then(setMaximized)).then((fn) => { unlisten = fn; });
+    win.isMaximized().then(setMaximized).catch(() => {});
+    win.onResized(() => win.isMaximized().then(setMaximized).catch(() => {})).then((fn) => { unlisten = fn; });
     return () => unlisten?.();
   }, []);
 
-  return (
+  const win = getCurrentWindow();
 
-    <div
-      data-tauri-drag-region
-      className="flex items-center h-10 bg-void-900 border-b border-void-600 select-none shrink-0"
-    >
-      {}
-      <div className="flex items-center gap-2 px-4 mr-2 shrink-0 pointer-events-none">
-        <img src="/pylon-icon.png" alt="Pylon" className="w-4 h-4 rounded-sm opacity-90" />
-        <span className="text-[13px] font-semibold tracking-tight text-slate-200">pylon</span>
-        <span className="px-1.5 py-px rounded bg-void-700 border border-void-600 text-[9px] font-mono text-slate-500 tracking-wider">v0.2</span>
+  return (
+    <div data-tauri-drag-region className="flex h-10 shrink-0 select-none items-center border-b border-void-600 bg-void-900">
+      <div data-tauri-drag-region className={`pointer-events-none flex shrink-0 items-center gap-2 ${mac ? "pl-[78px]" : "pl-3.5"} pr-3`}>
+        <PylonMark size={16} className="text-pylon-cyan" />
+        <span className="text-[13px] font-semibold tracking-tight text-slate-200">Pylon</span>
       </div>
 
-      {}
-      <div className="flex items-center gap-1 min-w-0 overflow-hidden max-w-[55%]">
+      <div className="flex h-full min-w-0 items-center gap-0.5 overflow-x-auto py-1.5" style={{ scrollbarWidth: "none" }}>
         {connections.map((conn) => {
           const isActive = conn.id === activeSessionId;
+          const broken = typeof conn.state === "object";
           return (
-            <button
+            <div
               key={conn.id}
-              onClick={() => { setActiveSession(conn.id); setActiveTab("files"); }}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs border shrink-0 transition-all group ${
-                isActive
-                  ? "bg-pylon-cyan/10 border-pylon-cyan/30 text-pylon-cyan"
-                  : "bg-void-700 border-void-500 text-slate-400 hover:text-slate-200 hover:bg-void-600"
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                setActiveSession(conn.id);
+                if (activeTab === "settings" || activeTab === "transfers") setActiveTab("files");
+              }}
+              onAuxClick={(e) => { if (e.button === 1) disconnectFromServer(conn.id); }}
+              title={`${conn.username}@${conn.host}:${conn.port}${broken ? " — connection lost" : ""}\nMiddle-click to disconnect`}
+              className={`group flex h-full max-w-[200px] shrink-0 items-center gap-2 rounded-md pl-2.5 pr-1 text-xs transition-colors ${
+                isActive ? "bg-void-700 text-slate-100" : "text-slate-400 hover:bg-void-800 hover:text-slate-200"
               }`}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-pylon-cyan animate-pulse" : "bg-pylon-green animate-pulse"}`} />
-              <span className="truncate max-w-28">{conn.label}</span>
-              <span
-                onClick={(e) => { e.stopPropagation(); disconnectFromServer(conn.id); }}
-                className="opacity-0 group-hover:opacity-100 hover:text-pylon-red transition-all ml-0.5 cursor-pointer"
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${broken ? "bg-pylon-red" : "bg-pylon-green"}`} />
+              <span className="truncate">{conn.label}</span>
+              <button
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => disconnectFromServer(conn.id)}
+                title="Disconnect"
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-void-500 hover:text-slate-100 ${isActive ? "" : "opacity-0 group-hover:opacity-100"}`}
               >
-                <X size={10} />
-              </span>
-            </button>
+                <X size={12} />
+              </button>
+            </div>
           );
         })}
-      </div>
-
-      {}
-      <div className="flex-1" data-tauri-drag-region />
-
-      {}
-      <div className="flex items-center shrink-0">
-        <button onClick={winMinimize}
-          className="w-10 h-10 flex items-center justify-center hover:bg-void-700 text-slate-400 hover:text-white transition-colors"
-          title="Minimize">
-          <Minus size={14} />
-        </button>
-        <button onClick={winToggleMaximize}
-          className="w-10 h-10 flex items-center justify-center hover:bg-void-700 text-slate-400 hover:text-white transition-colors"
-          title={maximized ? "Restore" : "Maximize"}>
-          <MaximizeIcon maximized={maximized} />
-        </button>
-        <button onClick={winClose}
-          className="w-10 h-10 flex items-center justify-center hover:bg-red-900/70 text-slate-400 hover:text-red-300 transition-colors"
-          title="Close">
-          <X size={14} />
+        <button
+          onClick={() => setConnectModal(true)}
+          title={`New connection (${modKey()}+N)`}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-void-700 hover:text-slate-200"
+        >
+          <Plus size={14} />
         </button>
       </div>
+
+      <div data-tauri-drag-region className="h-full min-w-[24px] flex-1" />
+
+      <button
+        onClick={() => setCommandPalette(true)}
+        className="mr-2 flex h-7 w-[220px] shrink items-center gap-2 rounded-md border border-void-600 bg-void-950/50 px-2.5 text-xs text-slate-500 hover:border-void-500 hover:text-slate-300"
+      >
+        <Search size={13} />
+        <span className="flex-1 text-left">Search commands…</span>
+        <span className="kbd">{modKey()} K</span>
+      </button>
+
+      {!mac && (
+        <div className="flex h-full shrink-0 items-center">
+          <button onClick={() => win.minimize()} className="flex h-full w-11 items-center justify-center text-slate-400 hover:bg-void-700 hover:text-slate-100" title="Minimize">
+            <Minus size={14} />
+          </button>
+          <button onClick={() => win.toggleMaximize()} className="flex h-full w-11 items-center justify-center text-slate-400 hover:bg-void-700 hover:text-slate-100" title={maximized ? "Restore" : "Maximize"}>
+            <MaximizeIcon maximized={maximized} />
+          </button>
+          <button onClick={() => win.close()} className="flex h-full w-11 items-center justify-center text-slate-400 hover:bg-[#c42b1c] hover:text-white" title="Close">
+            <X size={15} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

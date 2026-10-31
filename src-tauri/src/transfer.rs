@@ -1,53 +1,31 @@
-
-
 use std::{
     collections::HashMap,
+    fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::{
     error::{PylonError, PylonResult},
     metadata,
+    sftp::{self as rsftp},
+    ssh::{is_not_found, sftp_error, SshConn},
 };
 
-pub const CHUNK_SIZE: usize = 512 * 1024;
-
-fn sftp_rich_error(op: &str, path: &str, raw: &str) -> String {
-
-    let code_hint = if raw.contains("SFTP(2)") {
-        Some("no such file or directory")
-    } else if raw.contains("SFTP(3)") {
-        Some("permission denied")
-    } else if raw.contains("SFTP(4)") {
-        Some("permission denied / general failure")
-    } else if raw.contains("SFTP(8)") {
-        Some("file already exists")
-    } else if raw.contains("SFTP(14)") {
-        Some("no space left on device")
-    } else {
-        None
-    };
-    match code_hint {
-        Some(hint) => format!("{op} {path}: {raw} [{hint}]"),
-        None => format!("{op} {path}: {raw}"),
-    }
-}
-
-#[inline]
-fn effective_chunk(chunk_kb: Option<u64>) -> usize {
-    chunk_kb.map(|kb| (kb as usize).max(16) * 1024).unwrap_or(CHUNK_SIZE)
-}
+pub const DEFAULT_CHUNK: usize = 256 * 1024;
+pub const STRIP_MAX_BYTES: u64 = 256 * 1024 * 1024;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(125);
+pub const PARTIAL_SUFFIX: &str = ".pylon-part";
 
 const RUNNING: u8 = 0;
 const PAUSED: u8 = 1;
@@ -62,6 +40,13 @@ pub enum TransferState {
     Completed,
     Failed(String),
     Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferDirection {
+    Upload,
+    Download,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,13 +71,6 @@ pub struct TransferRecord {
     pub finished_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum TransferDirection {
-    Upload,
-    Download,
-}
-
 #[derive(Serialize, Clone)]
 pub struct TransferProgress {
     pub id: String,
@@ -114,641 +92,630 @@ pub struct ChecksumResult {
 
 pub struct ControlFlags {
     state: AtomicU8,
+    rate_limit: AtomicU64,
 }
 
 impl ControlFlags {
-    fn new() -> Arc<Self> {
-        Arc::new(Self { state: AtomicU8::new(RUNNING) })
+    fn new(rate: Option<u64>) -> Arc<Self> {
+        Arc::new(Self { state: AtomicU8::new(RUNNING), rate_limit: AtomicU64::new(rate.unwrap_or(0)) })
     }
-    fn is_cancelled(&self) -> bool { self.state.load(Ordering::Relaxed) == CANCELLED }
-    fn is_paused(&self) -> bool { self.state.load(Ordering::Relaxed) == PAUSED }
-    fn cancel(&self) { self.state.store(CANCELLED, Ordering::Relaxed); }
-    fn pause(&self) { self.state.store(PAUSED, Ordering::Relaxed); }
-    fn resume(&self) { self.state.store(RUNNING, Ordering::Relaxed); }
+    fn is_cancelled(&self) -> bool {
+        self.state.load(Ordering::Relaxed) == CANCELLED
+    }
+    fn is_paused(&self) -> bool {
+        self.state.load(Ordering::Relaxed) == PAUSED
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TransferRegistry {
     transfers: Arc<Mutex<HashMap<String, TransferRecord>>>,
     controls: Arc<Mutex<HashMap<String, Arc<ControlFlags>>>>,
+    batches: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl TransferRegistry {
     pub fn new() -> Self {
-        Self {
-            transfers: Arc::new(Mutex::new(HashMap::new())),
-            controls: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self::default()
     }
 
-    pub fn register(&self, record: TransferRecord) -> Arc<ControlFlags> {
-        let flags = ControlFlags::new();
+    fn register(&self, record: TransferRecord) -> Arc<ControlFlags> {
+        let flags = ControlFlags::new(record.rate_limit_bps);
         let id = record.id.clone();
-        if let Ok(mut map) = self.transfers.lock() { map.insert(id.clone(), record); }
-        if let Ok(mut map) = self.controls.lock() { map.insert(id, flags.clone()); }
+        self.transfers.lock().unwrap().insert(id.clone(), record);
+        self.controls.lock().unwrap().insert(id, flags.clone());
         flags
     }
 
-    pub fn update_progress(&self, id: &str, transferred: u64, sha256: Option<String>) {
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.transferred_bytes = transferred;
-                r.state = TransferState::Running;
-                if let Some(hash) = sha256 {
-                    r.sha256_local = Some(hash);
-                }
-            }
+    fn update(&self, id: &str, f: impl FnOnce(&mut TransferRecord)) {
+        if let Some(r) = self.transfers.lock().unwrap().get_mut(id) {
+            f(r);
         }
     }
 
-    pub fn set_paused(&self, id: &str) {
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.state = TransferState::Paused;
+    fn finish(&self, id: &str, state: TransferState, sha256: Option<String>) {
+        self.update(id, |r| {
+            r.state = state;
+            r.finished_at = Some(chrono::Utc::now().to_rfc3339());
+            if sha256.is_some() {
+                r.sha256_local = sha256;
             }
-        }
-    }
-
-    pub fn finish(&self, id: &str, sha256: Option<String>, err: Option<String>) {
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.state = match err {
-                    None => TransferState::Completed,
-                    Some(ref e) => TransferState::Failed(e.clone()),
-                };
-                r.finished_at = Some(chrono::Utc::now().to_rfc3339());
-                if let Some(hash) = sha256 {
-                    r.sha256_local = Some(hash);
-                }
-            }
-        }
-        if let Ok(mut map) = self.controls.lock() { map.remove(id); }
+        });
+        self.controls.lock().unwrap().remove(id);
     }
 
     pub fn cancel(&self, id: &str) {
-        if let Ok(map) = self.controls.lock() {
-            if let Some(flags) = map.get(id) {
-                flags.cancel();
-            }
-        }
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.state = TransferState::Cancelled;
-            }
+        if let Some(f) = self.controls.lock().unwrap().get(id) {
+            f.state.store(CANCELLED, Ordering::Relaxed);
         }
     }
 
     pub fn pause(&self, id: &str) {
-        if let Ok(map) = self.controls.lock() {
-            if let Some(flags) = map.get(id) {
-                flags.pause();
-            }
+        if let Some(f) = self.controls.lock().unwrap().get(id) {
+            let _ = f.state.compare_exchange(RUNNING, PAUSED, Ordering::Relaxed, Ordering::Relaxed);
         }
     }
 
     pub fn resume_transfer(&self, id: &str) {
-        if let Ok(map) = self.controls.lock() {
-            if let Some(flags) = map.get(id) {
-                flags.resume();
-            }
-        }
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.state = TransferState::Running;
-            }
+        if let Some(f) = self.controls.lock().unwrap().get(id) {
+            let _ = f.state.compare_exchange(PAUSED, RUNNING, Ordering::Relaxed, Ordering::Relaxed);
         }
     }
 
     pub fn set_rate_limit(&self, id: &str, bps: Option<u64>) {
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.rate_limit_bps = bps;
-            }
+        if let Some(f) = self.controls.lock().unwrap().get(id) {
+            f.rate_limit.store(bps.unwrap_or(0), Ordering::Relaxed);
         }
+        self.update(id, |r| r.rate_limit_bps = bps);
     }
 
     pub fn get_record(&self, id: &str) -> Option<TransferRecord> {
-        self.transfers.lock().ok()?.get(id).cloned()
-    }
-
-    pub fn set_checksum_verified(&self, id: &str, local: String, verified: bool) {
-        if let Ok(mut map) = self.transfers.lock() {
-            if let Some(r) = map.get_mut(id) {
-                r.sha256_local = Some(local);
-                r.checksum_verified = Some(verified);
-            }
-        }
+        self.transfers.lock().unwrap().get(id).cloned()
     }
 
     pub fn list(&self) -> Vec<TransferRecord> {
-        let mut v: Vec<TransferRecord> = self.transfers.lock()
-            .map(|m| m.values().cloned().collect())
-            .unwrap_or_default();
+        let mut v: Vec<TransferRecord> = self.transfers.lock().unwrap().values().cloned().collect();
         v.sort_by(|a, b| a.started_at.cmp(&b.started_at));
         v
     }
+
+    pub fn clear_finished(&self) {
+        self.transfers
+            .lock()
+            .unwrap()
+            .retain(|_, r| matches!(r.state, TransferState::Running | TransferState::Paused | TransferState::Queued));
+    }
+
+    pub fn new_batch(&self) -> (String, Arc<AtomicBool>) {
+        let id = Uuid::new_v4().to_string();
+        let flag = Arc::new(AtomicBool::new(false));
+        self.batches.lock().unwrap().insert(id.clone(), flag.clone());
+        (id, flag)
+    }
+
+    pub fn end_batch(&self, id: &str) {
+        self.batches.lock().unwrap().remove(id);
+    }
+
+    pub fn cancel_batch(&self, batch_id: &str) {
+        if let Some(f) = self.batches.lock().unwrap().get(batch_id) {
+            f.store(true, Ordering::Relaxed);
+        }
+        let ids: Vec<String> = self
+            .transfers
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| r.batch_id.as_deref() == Some(batch_id))
+            .map(|r| r.id.clone())
+            .collect();
+        for id in ids {
+            self.cancel(&id);
+        }
+    }
 }
 
-fn is_safe_to_upload(local_path: &str) -> PylonResult<()> {
-    let meta = std::fs::symlink_metadata(local_path)
-        .map_err(|e| PylonError::Io(format!("stat {local_path}: {e}")))?;
-    if meta.file_type().is_symlink() {
+#[derive(Clone, Debug)]
+pub struct TransferOpts {
+    pub strip_metadata: bool,
+    pub rate_limit_bps: Option<u64>,
+    pub chunk_size: usize,
+    pub batch_id: Option<String>,
+    pub verify: bool,
+}
+
+const VERIFY_MIN_BYTES: u64 = 1024 * 1024;
+
+fn remote_sha256(conn: &SshConn, path: &str) -> Option<String> {
+    let q = format!("'{}'", path.replace('\'', "'\\''"));
+    let cmd = format!("sha256sum -- {q} 2>/dev/null || shasum -a 256 -- {q} 2>/dev/null");
+    let mut ch = conn.sess.channel_session().ok()?;
+    ch.exec(&cmd).ok()?;
+    let mut out = String::new();
+    let _ = ch.read_to_string(&mut out);
+    let _ = ch.wait_close();
+    let hex = out.split_whitespace().next()?.to_lowercase();
+    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())).then_some(hex)
+}
+
+fn verify_remote(conn: &SshConn, registry: &TransferRegistry, id: &str, remote: &str, local_sha: &str, size: u64, opts: &TransferOpts) -> PylonResult<()> {
+    if !opts.verify || size < VERIFY_MIN_BYTES {
+        return Ok(());
+    }
+    let Some(remote_sha) = remote_sha256(conn, remote) else { return Ok(()) };
+    let ok = remote_sha == local_sha;
+    registry.update(id, |r| {
+        r.sha256_remote = Some(remote_sha.clone());
+        r.checksum_verified = Some(ok);
+    });
+    if !ok {
         return Err(PylonError::Transfer(format!(
-            "Refusing to upload symlink directly: {local_path}"
+            "Checksum mismatch for {remote}: local {}… vs server {}… — the copy is not identical",
+            &local_sha[..12], &remote_sha[..12]
         )));
     }
     Ok(())
 }
 
-fn unique_tmp_path(final_path: &str) -> String {
-    let uid = Uuid::new_v4().simple().to_string();
-    let uid_short = &uid[..8];
-    if let Some(parent) = Path::new(final_path).parent() {
-        let fname = Path::new(final_path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        format!("{}/.pylon_tmp_{}_{}", parent.display(), uid_short, fname)
-    } else {
-        format!("{}.pylon_tmp_{}", final_path, uid_short)
+impl TransferOpts {
+    pub fn new(strip_metadata: bool, bandwidth_kbps: Option<u64>, chunk_kb: Option<u64>) -> Self {
+        Self {
+            strip_metadata,
+            rate_limit_bps: bandwidth_kbps.filter(|k| *k > 0).map(|k| k * 1024),
+            chunk_size: chunk_kb.map(|kb| (kb as usize).clamp(16, 4096) * 1024).unwrap_or(DEFAULT_CHUNK),
+            batch_id: None,
+            verify: true,
+        }
+    }
+}
+
+fn partial_key(parts: &[&str]) -> String {
+    let mut h = Sha256::new();
+    for p in parts {
+        h.update(p.as_bytes());
+        h.update([0]);
+    }
+    hex::encode(&h.finalize()[..5])
+}
+
+fn partial_name(final_name: &str, key: &str) -> String {
+    format!(".{final_name}.{key}{PARTIAL_SUFFIX}")
+}
+
+pub fn is_partial_name(name: &str) -> bool {
+    name.ends_with(PARTIAL_SUFFIX) || name.starts_with(".pylon_tmp")
+}
+
+pub fn sanitize_local_component(name: &str) -> String {
+    if !cfg!(windows) {
+        return name.to_string();
+    }
+    let mut s: String = name
+        .chars()
+        .map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 32 { '_' } else { c })
+        .collect();
+    while s.ends_with('.') || s.ends_with(' ') {
+        s.pop();
+    }
+    let upper = s.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "LPT1", "LPT2", "LPT3"];
+    if reserved.contains(&upper.as_str()) {
+        s.insert(0, '_');
+    }
+    if s.is_empty() {
+        s.push('_');
+    }
+    s
+}
+
+struct Meter<'a> {
+    app: &'a AppHandle,
+    id: &'a str,
+    total: u64,
+    start: Instant,
+    last_emit: Instant,
+    last_bytes: u64,
+    speed: f64,
+}
+
+impl<'a> Meter<'a> {
+    fn new(app: &'a AppHandle, id: &'a str, total: u64, base: u64) -> Self {
+        let now = Instant::now();
+        Self { app, id, total, start: now, last_emit: now - PROGRESS_INTERVAL, last_bytes: base, speed: 0.0 }
+    }
+
+    fn tick(&mut self, done: u64, registry: &TransferRegistry, force: bool) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_emit);
+        if !force && dt < PROGRESS_INTERVAL {
+            return;
+        }
+        let secs = dt.as_secs_f64().max(1e-3);
+        let inst = (done.saturating_sub(self.last_bytes)) as f64 / secs;
+        self.speed = if self.speed == 0.0 { inst } else { self.speed * 0.7 + inst * 0.3 };
+        self.last_emit = now;
+        self.last_bytes = done;
+        registry.update(self.id, |r| {
+            r.transferred_bytes = done;
+            r.state = TransferState::Running;
+        });
+        let eta = if self.speed > 1.0 { Some(self.total.saturating_sub(done) as f64 / self.speed) } else { None };
+        emit_progress(self.app, self.id, done, self.total, self.speed, eta, TransferState::Running);
+    }
+
+    fn throttle(&self, flags: &ControlFlags, sent_since_start: u64) {
+        let bps = flags.rate_limit.load(Ordering::Relaxed);
+        if bps == 0 {
+            return;
+        }
+        let expected = Duration::from_secs_f64(sent_since_start as f64 / bps as f64);
+        let actual = self.start.elapsed();
+        if expected > actual {
+            std::thread::sleep((expected - actual).min(Duration::from_secs(2)));
+        }
+    }
+}
+
+fn checkpoint(app: &AppHandle, registry: &TransferRegistry, flags: &ControlFlags, id: &str, done: u64, total: u64) -> PylonResult<Duration> {
+    let paused_at = Instant::now();
+    if flags.is_paused() {
+        registry.update(id, |r| r.state = TransferState::Paused);
+        emit_progress(app, id, done, total, 0.0, None, TransferState::Paused);
+        while flags.is_paused() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if !flags.is_cancelled() {
+            registry.update(id, |r| r.state = TransferState::Running);
+            emit_progress(app, id, done, total, 0.0, None, TransferState::Running);
+        }
+    }
+    if flags.is_cancelled() {
+        return Err(PylonError::Transfer("Cancelled".into()));
+    }
+    Ok(paused_at.elapsed())
+}
+
+fn emit_progress(app: &AppHandle, id: &str, transferred: u64, total: u64, speed_bps: f64, eta_secs: Option<f64>, state: TransferState) {
+    let percent = if total > 0 { ((transferred as f64 / total as f64) * 100.0).min(100.0) as f32 } else { 100.0 };
+    let _ = app.emit(
+        "transfer://progress",
+        TransferProgress { id: id.to_string(), transferred_bytes: transferred, total_bytes: total, percent, speed_bps, eta_secs, state },
+    );
+}
+
+fn mtime_secs(meta: &std::fs::Metadata) -> u64 {
+    meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn hash_prefix(path: &Path, len: u64, hasher: &mut Sha256) -> PylonResult<()> {
+    let mut f = std::fs::File::open(path)?.take(len);
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn local_mode(meta: &std::fs::Metadata) -> i32 {
+    use std::os::unix::fs::PermissionsExt;
+    (meta.permissions().mode() & 0o777) as i32
+}
+#[cfg(not(unix))]
+fn local_mode(_meta: &std::fs::Metadata) -> i32 {
+    0o644
+}
+
+#[allow(clippy::too_many_arguments)]
+fn new_record(
+    id: &str,
+    session_id: &str,
+    direction: TransferDirection,
+    local: &str,
+    remote: &str,
+    total: u64,
+    offset: u64,
+    opts: &TransferOpts,
+) -> TransferRecord {
+    TransferRecord {
+        id: id.to_string(),
+        session_id: session_id.to_string(),
+        batch_id: opts.batch_id.clone(),
+        direction,
+        local_path: local.to_string(),
+        remote_path: remote.to_string(),
+        total_bytes: total,
+        transferred_bytes: offset,
+        resume_offset: offset,
+        state: TransferState::Running,
+        strip_metadata: opts.strip_metadata,
+        rate_limit_bps: opts.rate_limit_bps,
+        sha256_local: None,
+        sha256_remote: None,
+        checksum_verified: None,
+        retry_count: 0,
+        started_at: Some(chrono::Utc::now().to_rfc3339()),
+        finished_at: None,
+    }
+}
+
+fn conclude(
+    app: &AppHandle,
+    registry: &TransferRegistry,
+    flags: &ControlFlags,
+    id: &str,
+    result: PylonResult<(u64, String)>,
+    total: u64,
+) -> PylonResult<String> {
+    match result {
+        Ok((done, sha)) => {
+            registry.finish(id, TransferState::Completed, Some(sha.clone()));
+            emit_progress(app, id, done, total.max(done), 0.0, Some(0.0), TransferState::Completed);
+            let rec = registry.get_record(id);
+            let _ = app.emit("transfer://complete", ChecksumResult {
+                transfer_id: id.to_string(),
+                sha256_local: sha,
+                sha256_remote: rec.as_ref().and_then(|r| r.sha256_remote.clone()),
+                verified: rec.and_then(|r| r.checksum_verified).unwrap_or(false),
+            });
+            Ok(id.to_string())
+        }
+        Err(_) if flags.is_cancelled() => {
+            let done = registry.get_record(id).map(|r| r.transferred_bytes).unwrap_or(0);
+            registry.finish(id, TransferState::Cancelled, None);
+            emit_progress(app, id, done, total, 0.0, None, TransferState::Cancelled);
+            Ok(id.to_string())
+        }
+        Err(e) => {
+            let done = registry.get_record(id).map(|r| r.transferred_bytes).unwrap_or(0);
+            let msg = e.to_string();
+            registry.finish(id, TransferState::Failed(msg.clone()), None);
+            emit_progress(app, id, done, total, 0.0, None, TransferState::Failed(msg));
+            Err(e)
+        }
     }
 }
 
 pub fn upload(
     app: &AppHandle,
-    session: &Arc<Mutex<ssh2::Session>>,
+    conn: &SshConn,
     registry: &TransferRegistry,
-    session_id: String,
-    local_path: String,
-    remote_path: String,
-    strip_metadata: bool,
-    rate_limit_bps: Option<u64>,
-    batch_id: Option<String>,
-    chunk_kb: Option<u64>,
+    session_id: &str,
+    local_path: &str,
+    remote_path: &str,
+    opts: &TransferOpts,
 ) -> PylonResult<String> {
-    let chunk_size = effective_chunk(chunk_kb);
     let id = Uuid::new_v4().to_string();
+    let local = PathBuf::from(local_path);
+    let meta = std::fs::metadata(&local).map_err(|e| PylonError::Io(format!("{local_path}: {e}")))?;
+    if meta.is_dir() {
+        return Err(PylonError::Transfer(format!("{local_path} is a folder — use folder upload")));
+    }
 
-    is_safe_to_upload(&local_path)?;
-
-    let raw_data = std::fs::read(&local_path)?;
-
-    let data = if strip_metadata {
-        match metadata::strip_bytes(&raw_data, Path::new(&local_path)) {
-            Ok(clean) => clean,
-            Err(e) => {
-                tracing::warn!("metadata strip failed for {}: {} — uploading original", local_path, e);
-                raw_data
-            }
-        }
-    } else {
-        raw_data
-    };
-    let total = data.len() as u64;
-
-    let resume_offset = {
-        if let Ok(sess) = session.lock() {
-            if let Ok(sftp) = sess.sftp() {
-                sftp.stat(Path::new(&remote_path))
-                    .ok()
-                    .and_then(|s| s.size)
-                    .filter(|&s| s < total)
-                    .unwrap_or(0)
-            } else {
-                0
-            }
-        } else {
-            0
-        }
-    };
-
-    let tmp_remote = unique_tmp_path(&remote_path);
-
-    let _ = app.emit("transfer://new", serde_json::json!({
-        "id": &id,
-        "session_id": &session_id,
-        "batch_id": &batch_id,
-        "direction": "upload",
-        "local_path": &local_path,
-        "remote_path": &remote_path,
-    }));
-
-    let record = TransferRecord {
-        id: id.clone(),
-        session_id,
-        batch_id: batch_id.clone(),
-        direction: TransferDirection::Upload,
-        local_path: local_path.clone(),
-        remote_path: remote_path.clone(),
-        total_bytes: total,
-        transferred_bytes: resume_offset,
-        resume_offset,
-        state: TransferState::Running,
-        strip_metadata,
-        rate_limit_bps,
-        sha256_local: None,
-        sha256_remote: None,
-        checksum_verified: None,
-        retry_count: 0,
-        started_at: Some(chrono::Utc::now().to_rfc3339()),
-        finished_at: None,
-    };
-    let flags = registry.register(record);
-
-    let mut hasher = Sha256::new();
-    let mut written = resume_offset;
-    let start_time = Instant::now();
-
-    let result: PylonResult<()> = (|| {
-        let sess = session.lock().map_err(|_| PylonError::Transfer("Session lock poisoned".into()))?;
-        let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
-
-        if let Some(parent) = Path::new(&remote_path).parent() {
-            let parent_str = parent.to_string_lossy();
-            if !parent_str.is_empty() && parent_str != "/" {
-                let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
-                let mut current = String::new();
-                for part in &parts {
-                    if part.is_empty() { continue; }
-                    current = format!("{current}/{part}");
-                    let stat = sftp.stat(Path::new(&current));
-                    match stat {
-                        Ok(s) if s.is_dir() => {  }
-                        Ok(_) => {
-
-                            return Err(PylonError::Sftp(format!(
-                                "remote path component is a file, not a directory: {current}"
-                            )));
-                        }
-                        Err(_) => {
-                            sftp.mkdir(Path::new(&current), 0o755).map_err(|e| {
-                                PylonError::Sftp(format!("mkdir {current}: {e}"))
-                            })?;
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut actual_offset = resume_offset;
-        let mut remote_file = if resume_offset > 0 {
-
-            match sftp.open_mode(
-                Path::new(&tmp_remote),
-                ssh2::OpenFlags::WRITE | ssh2::OpenFlags::APPEND,
-                0o644,
-                ssh2::OpenType::File,
-            ) {
-                Ok(f) => f,
+    let mut stripped: Option<Vec<u8>> = None;
+    if opts.strip_metadata && metadata::is_strippable(&local) {
+        if meta.len() <= STRIP_MAX_BYTES {
+            let raw = std::fs::read(&local)?;
+            stripped = Some(match metadata::strip_bytes(&raw, &local) {
+                Ok(clean) => clean,
                 Err(e) => {
-                    let msg = e.to_string();
-
-                    if msg.contains("SFTP(2)") || msg.contains("no such file") || msg.contains("No such file") {
-                        tracing::warn!(
-                            "resume: temp file {tmp_remote} not found on remote ({}), starting fresh",
-                            msg
-                        );
-                        actual_offset = 0;
-                        written = 0;
-                        sftp.create(Path::new(&tmp_remote))
-                            .map_err(|e2| PylonError::Sftp(sftp_rich_error("create", &tmp_remote, &e2.to_string())))?
-                    } else {
-                        return Err(PylonError::Sftp(sftp_rich_error("open append", &tmp_remote, &msg)));
-                    }
+                    tracing::warn!("metadata strip failed for {local_path}: {e} — uploading original");
+                    raw
                 }
-            }
+            });
         } else {
-            sftp.create(Path::new(&tmp_remote))
-                .map_err(|e| PylonError::Sftp(sftp_rich_error("create", &tmp_remote, &e.to_string())))?
+            tracing::warn!("{local_path} too large to strip metadata in memory; uploading original");
+        }
+    }
+    let total = stripped.as_ref().map(|d| d.len() as u64).unwrap_or(meta.len());
+    let final_name = remote_path.rsplit('/').next().unwrap_or("file").to_string();
+    let parent_dir = rsftp::parent(remote_path).unwrap_or_else(|| "/".into());
+    let key = partial_key(&[local_path, &meta.len().to_string(), &mtime_secs(&meta).to_string(), &stripped.is_some().to_string()]);
+    let tmp_remote = rsftp::join(&parent_dir, &partial_name(&final_name, &key));
+    let resumable = stripped.is_none();
+
+    let record = new_record(&id, session_id, TransferDirection::Upload, local_path, remote_path, total, 0, opts);
+    let flags = registry.register(record.clone());
+    let _ = app.emit("transfer://new", &record);
+
+    let result = (|| -> PylonResult<(u64, String)> {
+        let sftp = conn.sftp()?;
+        rsftp::mkdir_p_with(&sftp, &parent_dir)?;
+
+        let existing_perm = match sftp.stat(Path::new(remote_path)) {
+            Ok(st) if st.is_dir() => {
+                return Err(PylonError::Transfer(format!("{remote_path} is a folder on the server")));
+            }
+            Ok(st) => st.perm.map(|p| p & 0o7777),
+            Err(e) if is_not_found(&e) => None,
+            Err(e) => return Err(sftp_error(&format!("stat {remote_path}"), &e)),
         };
 
-        if total == 0 {
-            drop(remote_file);
-            return Ok(());
-        }
-
-        let data_slice = &data[actual_offset as usize..];
-        for chunk in data_slice.chunks(chunk_size) {
-
-            while flags.is_paused() {
-                registry.set_paused(&id);
-                std::thread::sleep(Duration::from_millis(200));
-                if flags.is_cancelled() { break; }
-            }
-            if flags.is_cancelled() {
-                return Err(PylonError::Transfer("Cancelled".into()));
-            }
-
-            remote_file.write_all(chunk).map_err(|e| {
-                let msg = e.to_string();
-
-                if msg.contains("SFTP(14)") || msg.contains("no space") {
-                    PylonError::Transfer(format!("write chunk to {tmp_remote}: {msg} [no space left on device]"))
-                } else {
-                    PylonError::Transfer(format!("write chunk to {tmp_remote}: {msg}"))
-                }
-            })?;
-            hasher.update(chunk);
-            written += chunk.len() as u64;
-
-            if let Some(bps) = rate_limit_bps {
-                if bps > 0 {
-                    let expected = Duration::from_secs_f64(written as f64 / bps as f64);
-                    let actual = start_time.elapsed();
-                    if expected > actual {
-                        std::thread::sleep(expected - actual);
-                    }
+        let mut offset = 0u64;
+        if resumable {
+            if let Ok(st) = sftp.stat(Path::new(&tmp_remote)) {
+                if let Some(sz) = st.size.filter(|s| *s <= total) {
+                    offset = sz;
                 }
             }
-
-            let elapsed_total = start_time.elapsed().as_secs_f64();
-            let speed = if elapsed_total > 0.0 { written as f64 / elapsed_total } else { 0.0 };
-            let remaining = total.saturating_sub(written) as f64;
-            let eta = if speed > 0.0 { Some(remaining / speed) } else { None };
-
-            registry.update_progress(&id, written, None);
-            emit_progress(app, &id, written, total, speed, eta, TransferState::Running);
         }
-        Ok(())
+
+        let mut hasher = Sha256::new();
+        let mut source: Box<dyn Read + '_> = match &stripped {
+            Some(data) => Box::new(&data[..]),
+            None => {
+                let mut f = std::fs::File::open(&local)?;
+                if offset > 0 {
+                    hash_prefix(&local, offset, &mut hasher)?;
+                    f.seek(SeekFrom::Start(offset))?;
+                }
+                Box::new(f)
+            }
+        };
+
+        let flags_w = ssh2::OpenFlags::WRITE | ssh2::OpenFlags::CREATE | if offset == 0 { ssh2::OpenFlags::TRUNCATE } else { ssh2::OpenFlags::empty() };
+        let mut remote_file = sftp
+            .open_mode(Path::new(&tmp_remote), flags_w, 0o600, ssh2::OpenType::File)
+            .map_err(|e| sftp_error(&format!("create {tmp_remote}"), &e))?;
+        if offset > 0 {
+            remote_file.seek(SeekFrom::Start(offset))?;
+            registry.update(&id, |r| {
+                r.resume_offset = offset;
+                r.transferred_bytes = offset;
+            });
+        }
+
+        let mut meter = Meter::new(app, &id, total, offset);
+        let mut done = offset;
+        let mut buf = vec![0u8; opts.chunk_size];
+        loop {
+            meter.start += checkpoint(app, registry, &flags, &id, done, total)?;
+            let n = source.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            remote_file.write_all(&buf[..n]).map_err(|e| conn.io_error("Upload interrupted", &e))?;
+            hasher.update(&buf[..n]);
+            done += n as u64;
+            meter.throttle(&flags, done - offset);
+            meter.tick(done, registry, false);
+        }
+        drop(remote_file);
+        checkpoint(app, registry, &flags, &id, done, total)?;
+
+        if existing_perm.is_some() {
+            sftp.unlink(Path::new(remote_path)).map_err(|e| sftp_error(&format!("replace {remote_path}"), &e))?;
+        }
+        sftp.rename(Path::new(&tmp_remote), Path::new(remote_path), None)
+            .map_err(|e| sftp_error(&format!("rename into {remote_path}"), &e))?;
+        let perm = existing_perm.unwrap_or(local_mode(&meta) as u32);
+        let _ = sftp.setstat(
+            Path::new(remote_path),
+            ssh2::FileStat { size: None, uid: None, gid: None, perm: Some(perm), atime: None, mtime: None },
+        );
+        meter.tick(done, registry, true);
+        let sha = hex::encode(hasher.finalize());
+        verify_remote(conn, registry, &id, remote_path, &sha, done, opts)?;
+        Ok((done, sha))
     })();
 
-    let sha256_hex = hex::encode(hasher.finalize());
-
-    match result {
-        Ok(()) => {
-            let rename_result = {
-                if let Ok(sess) = session.lock() {
-                    if let Ok(sftp) = sess.sftp() {
-
-                        let _ = sftp.unlink(Path::new(&remote_path));
-                        sftp.rename(
-                            Path::new(&tmp_remote),
-                            Path::new(&remote_path),
-                            Some(ssh2::RenameFlags::OVERWRITE | ssh2::RenameFlags::ATOMIC),
-                        ).map_err(|e| PylonError::Sftp(sftp_rich_error("rename", &remote_path, &e.to_string())))
-                    } else {
-                        Err(PylonError::Sftp("sftp channel unavailable for rename".into()))
-                    }
-                } else {
-                    Err(PylonError::Transfer("Session lock poisoned on rename".into()))
-                }
-            };
-
-            match rename_result {
-                Ok(()) => {
-                    registry.finish(&id, Some(sha256_hex.clone()), None);
-                    emit_progress(app, &id, total, total, 0.0, Some(0.0), TransferState::Completed);
-                    let _ = app.emit("transfer://complete", ChecksumResult {
-                        transfer_id: id.clone(),
-                        sha256_local: sha256_hex,
-                        sha256_remote: None,
-                        verified: false,
-                    });
-                    Ok(id)
-                }
-                Err(e) => {
-
-                    cleanup_remote_temp(session, &tmp_remote);
-                    let msg = e.to_string();
-                    registry.finish(&id, None, Some(msg.clone()));
-                    emit_progress(app, &id, total, total, 0.0, None, TransferState::Failed(msg.clone()));
-                    Err(e)
-                }
-            }
-        }
-        Err(e) => {
-
-            cleanup_remote_temp(session, &tmp_remote);
-            let is_cancel = e.to_string().contains("Cancelled");
-            if is_cancel {
-                registry.finish(&id, None, Some("Cancelled".into()));
-                emit_progress(app, &id, written, total, 0.0, None, TransferState::Cancelled);
-                Ok(id)
-            } else {
-                let msg = e.to_string();
-                registry.finish(&id, None, Some(msg.clone()));
-                emit_progress(app, &id, written, total, 0.0, None, TransferState::Failed(msg.clone()));
-                Err(e)
-            }
+    if result.is_err() && (flags.is_cancelled() || !resumable) {
+        if let Ok(sftp) = conn.sftp() {
+            let _ = sftp.unlink(Path::new(&tmp_remote));
         }
     }
-}
-
-fn cleanup_remote_temp(session: &Arc<Mutex<ssh2::Session>>, tmp_path: &str) {
-    if let Ok(sess) = session.lock() {
-        if let Ok(sftp) = sess.sftp() {
-            let _ = sftp.unlink(Path::new(tmp_path));
-        }
-    }
+    conclude(app, registry, &flags, &id, result, total)
 }
 
 pub fn download(
     app: &AppHandle,
-    session: &Arc<Mutex<ssh2::Session>>,
+    conn: &SshConn,
     registry: &TransferRegistry,
-    session_id: String,
-    remote_path: String,
-    local_path: String,
-    batch_id: Option<String>,
-    rate_limit_bps: Option<u64>,
-    chunk_kb: Option<u64>,
+    session_id: &str,
+    remote_path: &str,
+    local_path: &str,
+    opts: &TransferOpts,
 ) -> PylonResult<String> {
-    let chunk_size = effective_chunk(chunk_kb);
     let id = Uuid::new_v4().to_string();
-
-    let (total, resume_offset) = {
-        let sess = session.lock().map_err(|_| PylonError::Transfer("Session lock poisoned".into()))?;
-        let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
-        let stat = sftp.stat(Path::new(&remote_path)).map_err(|e| PylonError::Sftp(e.to_string()))?;
-        let total = stat.size.unwrap_or(0);
-        let existing_local = Path::new(&local_path).metadata().map(|m| m.len()).unwrap_or(0);
-        let resume = if total > 0 && existing_local < total {
-            existing_local
-        } else {
-            0
-        };
-        (total, resume)
-    };
-
-    if let Some(parent) = Path::new(&local_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| PylonError::Io(format!("create dirs for {}: {e}", local_path)))?;
+    let sftp = conn.sftp()?;
+    let st = sftp.stat(Path::new(remote_path)).map_err(|e| sftp_error(&format!("stat {remote_path}"), &e))?;
+    if st.is_dir() {
+        return Err(PylonError::Transfer(format!("{remote_path} is a folder — use folder download")));
     }
+    let total = st.size.unwrap_or(0);
+    let remote_mtime = st.mtime.unwrap_or(0);
 
-    let tmp_local = {
-        let parent = Path::new(&local_path)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| ".".to_string());
-        let fname = Path::new(&local_path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        let uid = Uuid::new_v4().simple().to_string();
-        format!("{parent}/.pylon_tmp_{}_{}", &uid[..8], fname)
-    };
+    let requested = PathBuf::from(local_path);
+    let parent = requested.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let file_name = sanitize_local_component(&requested.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into()));
+    let final_local = parent.join(&file_name);
+    let final_local_str = final_local.to_string_lossy().into_owned();
+    let key = partial_key(&[remote_path, &total.to_string(), &remote_mtime.to_string()]);
+    let tmp_local = parent.join(partial_name(&file_name, &key));
 
-    let _ = app.emit("transfer://new", serde_json::json!({
-        "id": &id,
-        "session_id": &session_id,
-        "batch_id": &batch_id,
-        "direction": "download",
-        "local_path": &local_path,
-        "remote_path": &remote_path,
-    }));
+    let record = new_record(&id, session_id, TransferDirection::Download, &final_local_str, remote_path, total, 0, opts);
+    let flags = registry.register(record.clone());
+    let _ = app.emit("transfer://new", &record);
 
-    let record = TransferRecord {
-        id: id.clone(),
-        session_id,
-        batch_id: batch_id.clone(),
-        direction: TransferDirection::Download,
-        local_path: local_path.clone(),
-        remote_path: remote_path.clone(),
-        total_bytes: total,
-        transferred_bytes: resume_offset,
-        resume_offset,
-        state: TransferState::Running,
-        strip_metadata: false,
-        rate_limit_bps,
-        sha256_local: None,
-        sha256_remote: None,
-        checksum_verified: None,
-        retry_count: 0,
-        started_at: Some(chrono::Utc::now().to_rfc3339()),
-        finished_at: None,
-    };
-    let flags = registry.register(record);
-
-    let mut hasher = Sha256::new();
-    let mut received = resume_offset;
-    let start_time = Instant::now();
-
-    let result: PylonResult<()> = (|| {
-        let sess = session.lock().map_err(|_| PylonError::Transfer("Session lock poisoned".into()))?;
-        let sftp = sess.sftp().map_err(|e| PylonError::Sftp(e.to_string()))?;
-
-        let mut remote_file = sftp
-            .open(Path::new(&remote_path))
-            .map_err(|e| PylonError::Sftp(format!("open {remote_path}: {e}")))?;
-
-        if resume_offset > 0 {
-            remote_file.seek(SeekFrom::Start(resume_offset))
-                .map_err(|e| PylonError::Transfer(format!("seek remote: {e}")))?;
+    let result = (|| -> PylonResult<(u64, String)> {
+        std::fs::create_dir_all(&parent).map_err(|e| PylonError::Io(format!("create {}: {e}", parent.display())))?;
+        if final_local.is_dir() {
+            return Err(PylonError::Transfer(format!("{} is a folder", final_local.display())));
         }
 
-        let mut local_file = if resume_offset > 0 {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&tmp_local)
-                .or_else(|_| std::fs::File::create(&tmp_local))
-                .map_err(|e| PylonError::Io(format!("open tmp {}: {e}", tmp_local)))?
-        } else {
-            std::fs::File::create(&tmp_local)
-                .map_err(|e| PylonError::Io(format!("create tmp {}: {e}", tmp_local)))?
-        };
-
-        if total == 0 {
-            return Ok(());
+        let mut offset = std::fs::metadata(&tmp_local).map(|m| m.len()).unwrap_or(0);
+        if offset > total {
+            offset = 0;
+        }
+        let mut hasher = Sha256::new();
+        if offset > 0 {
+            hash_prefix(&tmp_local, offset, &mut hasher)?;
         }
 
-        let mut buf = vec![0u8; chunk_size];
+        let mut local_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&tmp_local)
+            .map_err(|e| PylonError::Io(format!("open {}: {e}", tmp_local.display())))?;
+        local_file.set_len(offset)?;
+        local_file.seek(SeekFrom::Start(offset))?;
+
+        let mut remote_file = sftp.open(Path::new(remote_path)).map_err(|e| sftp_error(&format!("open {remote_path}"), &e))?;
+        if offset > 0 {
+            remote_file.seek(SeekFrom::Start(offset))?;
+            registry.update(&id, |r| {
+                r.resume_offset = offset;
+                r.transferred_bytes = offset;
+            });
+        }
+
+        let mut meter = Meter::new(app, &id, total, offset);
+        let mut done = offset;
+        let mut buf = vec![0u8; opts.chunk_size];
         loop {
-            while flags.is_paused() {
-                registry.set_paused(&id);
-                std::thread::sleep(Duration::from_millis(200));
-                if flags.is_cancelled() { break; }
+            meter.start += checkpoint(app, registry, &flags, &id, done, total)?;
+            let n = remote_file.read(&mut buf).map_err(|e| conn.io_error("Download interrupted", &e))?;
+            if n == 0 {
+                break;
             }
-            if flags.is_cancelled() {
-                return Err(PylonError::Transfer("Cancelled".into()));
-            }
-
-            let n = remote_file.read(&mut buf)
-                .map_err(|e| PylonError::Transfer(format!("read remote chunk: {e}")))?;
-            if n == 0 { break; }
-
-            local_file.write_all(&buf[..n])
-                .map_err(|e| PylonError::Io(format!("write local chunk: {e}")))?;
+            local_file.write_all(&buf[..n]).map_err(|e| PylonError::Io(format!("write {}: {e}", tmp_local.display())))?;
             hasher.update(&buf[..n]);
-            received += n as u64;
-
-            if let Some(bps) = rate_limit_bps {
-                if bps > 0 {
-                    let expected = Duration::from_secs_f64(received as f64 / bps as f64);
-                    let actual = start_time.elapsed();
-                    if expected > actual {
-                        std::thread::sleep(expected - actual);
-                    }
-                }
-            }
-
-            let elapsed_total = start_time.elapsed().as_secs_f64();
-            let speed = if elapsed_total > 0.0 { received as f64 / elapsed_total } else { 0.0 };
-            let remaining = total.saturating_sub(received) as f64;
-            let eta = if speed > 0.0 { Some(remaining / speed) } else { None };
-
-            registry.update_progress(&id, received, None);
-            emit_progress(app, &id, received, total, speed, eta, TransferState::Running);
+            done += n as u64;
+            meter.throttle(&flags, done - offset);
+            meter.tick(done, registry, false);
         }
-        Ok(())
+        local_file.flush()?;
+        drop(local_file);
+        if done < total {
+            return Err(PylonError::Transfer(format!(
+                "{remote_path} ended early ({done} of {total} bytes) — it may have been truncated on the server"
+            )));
+        }
+        checkpoint(app, registry, &flags, &id, done, total)?;
+        let sha = hex::encode(hasher.finalize());
+        if let Err(e) = verify_remote(conn, registry, &id, remote_path, &sha, done, opts) {
+            let _ = std::fs::remove_file(&tmp_local);
+            return Err(e);
+        }
+
+        std::fs::rename(&tmp_local, &final_local)
+            .map_err(|e| PylonError::Io(format!("move into {}: {e}", final_local.display())))?;
+        if remote_mtime > 0 {
+            if let Ok(f) = OpenOptions::new().write(true).open(&final_local) {
+                let _ = f.set_modified(UNIX_EPOCH + Duration::from_secs(remote_mtime));
+            }
+        }
+        meter.tick(done, registry, true);
+        Ok((done, sha))
     })();
 
-    let sha256_hex = hex::encode(hasher.finalize());
-
-    match result {
-        Ok(()) => {
-            std::fs::rename(&tmp_local, &local_path)
-                .map_err(|e| {
-                    let _ = std::fs::remove_file(&tmp_local);
-                    PylonError::Io(format!("rename tmp to {}: {e}", local_path))
-                })?;
-            registry.finish(&id, Some(sha256_hex.clone()), None);
-            emit_progress(app, &id, total, total, 0.0, Some(0.0), TransferState::Completed);
-            let _ = app.emit("transfer://complete", ChecksumResult {
-                transfer_id: id.clone(),
-                sha256_local: sha256_hex,
-                sha256_remote: None,
-                verified: false,
-            });
-            Ok(id)
-        }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp_local);
-            let is_cancel = e.to_string().contains("Cancelled");
-            if is_cancel {
-                registry.finish(&id, None, Some("Cancelled".into()));
-                emit_progress(app, &id, received, total, 0.0, None, TransferState::Cancelled);
-                Ok(id)
-            } else {
-                let msg = e.to_string();
-                registry.finish(&id, None, Some(msg.clone()));
-                emit_progress(app, &id, received, total, 0.0, None, TransferState::Failed(msg.clone()));
-                Err(e)
-            }
-        }
+    if result.is_err() && flags.is_cancelled() {
+        let _ = std::fs::remove_file(&tmp_local);
     }
-}
-
-fn emit_progress(
-    app: &AppHandle,
-    id: &str,
-    transferred: u64,
-    total: u64,
-    speed_bps: f64,
-    eta_secs: Option<f64>,
-    state: TransferState,
-) {
-    let percent = if total > 0 { (transferred as f32 / total as f32) * 100.0 } else { 100.0 };
-    let _ = app.emit(
-        "transfer://progress",
-        TransferProgress {
-            id: id.to_string(),
-            transferred_bytes: transferred,
-            total_bytes: total,
-            percent,
-            speed_bps,
-            eta_secs,
-            state,
-        },
-    );
+    conclude(app, registry, &flags, &id, result, total)
 }

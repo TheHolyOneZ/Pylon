@@ -1,5 +1,3 @@
-
-
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -11,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{PylonError, PylonResult},
-    vault::Vault,
+    vault::{Credential, Vault},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,7 +88,9 @@ impl VaultManager {
         if let Some(parent) = self.profiles_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.profiles_path, data)?;
+        let tmp = self.profiles_path.with_extension("tmp");
+        std::fs::write(&tmp, data)?;
+        std::fs::rename(&tmp, &self.profiles_path)?;
         Ok(())
     }
 
@@ -210,12 +210,28 @@ impl VaultManager {
         Err(PylonError::Vault(format!("Profile '{id}' not found")))
     }
 
+    pub fn exists(&self) -> bool {
+        self.active_vault().map(|v| v.exists()).unwrap_or(false)
+    }
+
+    pub fn create(&self, passphrase: &str) -> PylonResult<()> {
+        self.active_vault()?.create(passphrase)
+    }
+
     pub fn unlock(&self, passphrase: &str) -> PylonResult<()> {
         self.active_vault()?.unlock(passphrase)
     }
 
     pub fn lock(&self) {
-        if let Ok(v) = self.active_vault() { v.lock(); }
+        if let Ok(v) = self.active_vault() {
+            v.lock();
+        }
+    }
+
+    pub fn lock_all(&self) {
+        for v in self.vaults.lock().unwrap().values() {
+            v.lock();
+        }
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -226,27 +242,37 @@ impl VaultManager {
         self.active_vault()?.reset()
     }
 
-    pub fn add_credential_returning_id(&self, passphrase: &str, cred: crate::vault::Credential) -> PylonResult<String> {
-        self.active_vault()?.add_credential_returning_id(passphrase, cred)
+    pub fn change_passphrase(&self, current: &str, new: &str) -> PylonResult<()> {
+        self.active_vault()?.change_passphrase(current, new)
     }
 
-    pub fn update_credential(&self, passphrase: &str, cred: crate::vault::Credential) -> PylonResult<()> {
-        self.active_vault()?.update_credential(passphrase, cred)
+    pub fn add_credential(&self, cred: Credential) -> PylonResult<String> {
+        self.active_vault()?.add_credential(cred)
     }
 
-    pub fn get_credential(&self, id: &str) -> PylonResult<crate::vault::Credential> {
-        self.active_vault()?.get_credential(id)
+    pub fn update_credential(&self, cred: Credential) -> PylonResult<()> {
+        self.active_vault()?.update_credential(cred)
     }
 
-    pub fn get_credential_with_secret(&self, id: &str) -> PylonResult<crate::vault::Credential> {
+    pub fn touch(&self, id: &str) {
+        if let Ok(v) = self.active_vault() {
+            v.touch(id);
+        }
+    }
+
+    pub fn get_credential(&self, id: &str) -> PylonResult<Credential> {
+        self.active_vault()?.get_credential_with_secret(id).map(|c| c.redacted())
+    }
+
+    pub fn get_credential_with_secret(&self, id: &str) -> PylonResult<Credential> {
         self.active_vault()?.get_credential_with_secret(id)
     }
 
-    pub fn list_credentials(&self) -> PylonResult<Vec<crate::vault::Credential>> {
+    pub fn list_credentials(&self) -> PylonResult<Vec<Credential>> {
         self.active_vault()?.list_credentials()
     }
 
-    pub fn delete_credential(&self, passphrase: &str, id: &str) -> PylonResult<()> {
-        self.active_vault()?.delete_credential(passphrase, id)
+    pub fn delete_credential(&self, id: &str) -> PylonResult<()> {
+        self.active_vault()?.delete_credential(id)
     }
 }

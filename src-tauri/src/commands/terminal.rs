@@ -1,48 +1,35 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager};
 
-use crate::{
-    error::PylonError,
-    session::SessionRegistry,
-    terminal::TerminalRegistry,
-};
+use super::blocking;
+use crate::{error::PylonError, session::SessionRegistry, terminal::TerminalRegistry};
 
 #[tauri::command]
 pub async fn create_terminal(
     app: AppHandle,
-    session_registry: State<'_, SessionRegistry>,
-    terminal_registry: State<'_, TerminalRegistry>,
     session_id: String,
     cols: u32,
     rows: u32,
     shell: Option<String>,
 ) -> Result<String, PylonError> {
-    let auth = session_registry.get_term_auth(&session_id)?;
-    terminal_registry.open(app, auth, session_id, cols, rows, shell)
+    blocking(move || {
+        let auth = app.state::<SessionRegistry>().get_auth(&session_id)?;
+        let reg = app.state::<TerminalRegistry>();
+        reg.open(app.clone(), auth, session_id, cols, rows, shell)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn terminal_input(
-    terminal_registry: State<'_, TerminalRegistry>,
-    terminal_id: String,
-    data: Vec<u8>,
-) -> Result<(), PylonError> {
-    terminal_registry.write(&terminal_id, &data)
+pub fn terminal_input(app: AppHandle, terminal_id: String, data: String) -> Result<(), PylonError> {
+    app.state::<TerminalRegistry>().write(&terminal_id, data.as_bytes())
 }
 
 #[tauri::command]
-pub async fn resize_terminal(
-    terminal_registry: State<'_, TerminalRegistry>,
-    terminal_id: String,
-    cols: u32,
-    rows: u32,
-) -> Result<(), PylonError> {
-    terminal_registry.resize(&terminal_id, cols, rows)
+pub fn resize_terminal(app: AppHandle, terminal_id: String, cols: u32, rows: u32) -> Result<(), PylonError> {
+    app.state::<TerminalRegistry>().resize(&terminal_id, cols, rows)
 }
 
 #[tauri::command]
-pub async fn close_terminal(
-    terminal_registry: State<'_, TerminalRegistry>,
-    terminal_id: String,
-) -> Result<(), PylonError> {
-    terminal_registry.close(&terminal_id)
+pub async fn close_terminal(app: AppHandle, terminal_id: String) -> Result<(), PylonError> {
+    app.state::<TerminalRegistry>().close(&terminal_id)
 }

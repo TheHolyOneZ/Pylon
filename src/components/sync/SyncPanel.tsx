@@ -1,5 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useFileStore } from "../../stores/fileStore";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, EyeOff, FolderOpen, FolderSync,
@@ -137,8 +139,8 @@ interface AddWatcherModalProps {
 }
 
 function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
-  const [localRoot, setLocalRoot] = useState("");
-  const [remoteRoot, setRemoteRoot] = useState("/");
+  const [localRoot, setLocalRoot] = useState(() => useFileStore.getState().localPath);
+  const [remoteRoot, setRemoteRoot] = useState(() => useFileStore.getState().remotePath || "/");
   const [label, setLabel] = useState("My Sync");
   const [stripMetadata, setStripMetadata] = useState(false);
   const [rule, setRule] = useState<SyncRule>("always_overwrite");
@@ -233,12 +235,25 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
               <label className="text-[11px] text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                 <FolderOpen size={10} /> Local Root
               </label>
+              <div className="flex gap-1.5">
               <input
                 value={localRoot}
                 onChange={(e) => setLocalRoot(e.target.value)}
                 placeholder="/home/user/project"
                 className="w-full bg-void-800 border border-void-500 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-pylon-cyan/50 transition-colors font-mono"
               />
+              <button
+                type="button"
+                title="Choose folder"
+                onClick={async () => {
+                  const d = await openDialog({ directory: true, multiple: false, defaultPath: localRoot || undefined }).catch(() => null);
+                  if (typeof d === "string") setLocalRoot(d);
+                }}
+                className="shrink-0 rounded-lg border border-void-500 px-2 text-slate-400 hover:bg-void-700 hover:text-slate-100"
+              >
+                <FolderOpen size={13} />
+              </button>
+              </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -277,7 +292,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
             </div>
           </label>
 
-          {}
           <div className="border border-void-600 rounded-lg overflow-hidden">
             <button
               type="button"
@@ -298,7 +312,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
                 >
                   <div className="p-3 space-y-3 bg-void-850 border-t border-void-600">
 
-                    {}
                     <div className="space-y-1.5">
                       <label className="text-[11px] text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                         <Lock size={9} className="text-pylon-red/70" />
@@ -316,7 +329,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
                       </p>
                     </div>
 
-                    {}
                     <div className="space-y-1.5">
                       <label className="text-[11px] text-slate-400 uppercase tracking-widest">Max File Size (KB)</label>
                       <input
@@ -330,7 +342,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
                       <p className="text-[10px] text-slate-600">Files larger than this will be skipped during sync.</p>
                     </div>
 
-                    {}
                     <label className="flex items-center gap-3 cursor-pointer p-2.5 rounded-lg bg-void-800 border border-void-600 hover:border-pylon-red/30 transition-colors">
                       <Toggle checked={syncDeletes} onChange={setSyncDeletes} />
                       <div>
@@ -344,7 +355,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
                       </div>
                     </label>
 
-                    {}
                     <label className="flex items-center gap-3 cursor-pointer p-2.5 rounded-lg bg-void-800 border border-void-600 hover:border-pylon-violet/30 transition-colors">
                       <Toggle checked={dryRun} onChange={setDryRun} />
                       <div>
@@ -358,7 +368,6 @@ function AddWatcherModal({ onClose, onAdd, sessionId }: AddWatcherModalProps) {
                       </div>
                     </label>
 
-                    {}
                     <label className="flex items-center gap-3 cursor-pointer p-2.5 rounded-lg bg-void-800 border border-void-600 hover:border-pylon-amber/30 transition-colors">
                       <Toggle checked={initialSyncOnly} onChange={setInitialSyncOnly} />
                       <div>
@@ -493,8 +502,9 @@ function EditWatcherModal({ sync, sessionId, onClose, onUpdated }: EditWatcherMo
     setLoading(true);
     setError("");
     try {
-      await api.stopSync(sync.id);
       const config = await api.startSync({
+        replaceId: sync.id,
+        keepOnDisconnect,
         sessionId,
         localRoot: localRoot.trim(),
         remoteRoot: remoteRoot.trim(),
@@ -508,10 +518,8 @@ function EditWatcherModal({ sync, sessionId, onClose, onUpdated }: EditWatcherMo
         initialSyncOnly,
         preserveTimestamps: sync.preserve_timestamps,
         mirrorPermissions: sync.mirror_permissions,
+        excludePatterns: sync.exclude_patterns,
       });
-      if (keepOnDisconnect) {
-        await api.updateSyncKeepOnDisconnect(config.id, true).catch(() => {});
-      }
       onUpdated(config);
       onClose();
     } catch (e: any) {
@@ -620,7 +628,6 @@ function EditWatcherModal({ sync, sessionId, onClose, onUpdated }: EditWatcherMo
             </div>
           </label>
 
-          {}
           <div className="border border-void-600 rounded-lg overflow-hidden">
             <button
               type="button"
@@ -829,10 +836,9 @@ export function SyncPanel() {
 
   return (
     <div className="flex flex-col h-full bg-void-900">
-      {}
       <div className="flex items-center gap-3 px-4 py-3 bg-void-800 border-b border-void-600 shrink-0">
         <FolderSync size={16} className="text-pylon-cyan" />
-        <span className="text-sm font-semibold text-slate-200">Pylon-Sync</span>
+        <span className="text-sm font-semibold text-slate-200">Sync</span>
         {syncs.length > 0 && (
           <span className="px-1.5 py-0.5 rounded-full bg-pylon-cyan/15 text-pylon-cyan text-[10px] font-semibold">
             {syncs.length} active
@@ -854,7 +860,6 @@ export function SyncPanel() {
         </button>
       </div>
 
-      {}
       <AnimatePresence initial={false}>
         {confirms.map((req) => (
           <ConfirmBanner key={req.request_id} req={req} onDecide={handleDecide} />
@@ -862,14 +867,17 @@ export function SyncPanel() {
       </AnimatePresence>
 
       <div className="flex-1 overflow-hidden flex min-h-0">
-        {}
         <div className="w-72 border-r border-void-600 overflow-y-auto p-3 space-y-2 shrink-0">
           {syncs.length === 0 && suspendedSyncs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-slate-600 gap-3">
-              <RefreshCw size={28} className="opacity-30" />
+            <div className="flex h-48 flex-col items-center justify-center gap-3 px-3 text-slate-500">
+              <RefreshCw size={22} className="text-slate-600" />
               <div className="text-center">
-                <p className="text-xs">No active watchers</p>
-                <p className="text-[11px] text-slate-700 mt-1">Connect via ZVault and add a watcher to begin syncing</p>
+                <p className="text-[13px] text-slate-300">No watchers yet</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  {activeSessionId
+                    ? "Add a watcher to push local changes to this server as you save."
+                    : "Connect to a server saved in ZVault, then add a watcher."}
+                </p>
               </div>
             </div>
           ) : (
@@ -891,7 +899,6 @@ export function SyncPanel() {
                         : "border-void-600 hover:border-void-500"
                     }`}
                 >
-                  {}
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full shrink-0 ${
                       hasError ? "bg-pylon-red" :
@@ -920,7 +927,6 @@ export function SyncPanel() {
                     </button>
                   </div>
 
-                  {}
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
                       <FolderOpen size={9} className="shrink-0" />
@@ -936,13 +942,11 @@ export function SyncPanel() {
                     <p className="text-[10px] text-pylon-red/80 font-mono truncate">{errors[s.id]}</p>
                   )}
 
-                  {}
                   <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
                     <p className="text-[10px] text-slate-600 uppercase tracking-widest mb-1">Rule</p>
                     <RulePicker value={s.rule ?? "always_overwrite"} onChange={(r) => handleRuleChange(s.id, r)} compact />
                   </div>
 
-                  {}
                   <div
                     className="flex items-center gap-2 pt-0.5"
                     onClick={(e) => e.stopPropagation()}
@@ -955,7 +959,6 @@ export function SyncPanel() {
                     />
                   </div>
 
-                  {}
                   <div
                     className="flex items-center gap-2"
                     onClick={(e) => e.stopPropagation()}
@@ -968,7 +971,6 @@ export function SyncPanel() {
                     />
                   </div>
 
-                  {}
                   {(s.protected_patterns?.length > 0 || s.max_file_size_kb || s.sync_deletes || s.initial_sync_only) && (
                     <div className="flex flex-wrap gap-1 pt-0.5" onClick={(e) => e.stopPropagation()}>
                       {s.protected_patterns?.length > 0 && (
@@ -1034,7 +1036,6 @@ export function SyncPanel() {
           )}
         </div>
 
-        {}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-void-700 shrink-0">
             {selectedSync ? (
@@ -1058,9 +1059,9 @@ export function SyncPanel() {
 
           <div className="flex-1 overflow-y-auto p-3">
             {visibleEvents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-32 text-slate-700 gap-2">
-                <Zap size={20} className="opacity-30" />
-                <p className="text-xs">No sync events yet</p>
+              <div className="flex h-32 flex-col items-center justify-center gap-2 text-slate-500">
+                <Zap size={18} className="text-slate-600" />
+                <p className="text-xs">Changes will appear here as they sync</p>
               </div>
             ) : (
               <AnimatePresence initial={false}>
@@ -1069,7 +1070,7 @@ export function SyncPanel() {
                     key={e.id}
                     initial={{ opacity: 0, x: -6 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className={`flex items-center gap-2 text-xs font-mono py-0.5 ${e.skipped ? "opacity-40" : ""}`}
+                    className={`flex items-center gap-2 py-0.5 font-mono text-xs ${e.skipped ? "opacity-50" : ""}`}
                   >
                     <Zap
                       size={8}
@@ -1079,13 +1080,14 @@ export function SyncPanel() {
                         "text-pylon-cyan shrink-0"
                       }
                     />
-                    <span className="truncate flex-1 text-slate-500" title={e.relPath}>{e.relPath}</span>
+                    <span className="flex-1 truncate text-slate-300" title={e.relPath}>{e.relPath}</span>
                     <span className={`text-[10px] shrink-0 ${
                       e.skipped        ? "text-slate-700" :
                       e.kind === "deleted"   ? "text-pylon-red/60" :
                       e.kind === "modified"  ? "text-pylon-amber/60" :
                       "text-pylon-green/60"
                     }`}>{e.skipped ? "skipped" : e.kind}</span>
+                    <span className="tabular w-16 shrink-0 text-right text-[10px] text-slate-600">{new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
                   </motion.div>
                 ))}
               </AnimatePresence>

@@ -1,142 +1,173 @@
-import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Command, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  ArrowLeftRight, Eye, FolderTree, KeyRound, Lock, Plug, RefreshCw, Search, Server, Settings, SquareTerminal, Unplug,
+} from "lucide-react";
 import { useUiStore } from "../../stores/uiStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useFileStore } from "../../stores/fileStore";
+import { useServerStore } from "../../stores/serverStore";
+import { modKey } from "../../lib/path";
+import { openTerminalTab } from "../terminal/TerminalPane";
+import { toast } from "../../stores/toastStore";
+import { errMsg } from "../../lib/format";
 
-interface PaletteAction {
+interface Action {
+  id: string;
   label: string;
-  description?: string;
+  hint?: string;
   shortcut?: string;
   group: string;
-  action: () => void;
+  icon: React.ReactNode;
+  run: () => void;
 }
 
-interface Props {
-  open: boolean;
-  onClose: () => void;
+function score(q: string, text: string): number {
+  const t = text.toLowerCase();
+  if (!q) return 1;
+  const i = t.indexOf(q);
+  if (i === 0) return 100;
+  if (i > 0) return 60 - i;
+  let qi = 0;
+  for (const ch of t) if (ch === q[qi]) qi++;
+  return qi === q.length ? 10 : 0;
 }
 
-export function CommandPalette({ open, onClose }: Props) {
+export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [sel, setSel] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const ui = useUiStore();
+  const { activeSessionId, connections, credentials, vaultUnlocked, disconnectFromServer, setActiveSession, connectVault, lockVault } = useConnectionStore();
+  const fs = useFileStore();
+  const servers = useServerStore((s) => s.servers);
+  const mod = modKey();
 
-  const { setConnectModal, setVaultModal, setActiveTab, toggleTransferDrawer } = useUiStore();
-  const { activeSessionId, disconnectFromServer } = useConnectionStore();
-  const { refreshLocal, refreshRemote, toggleHidden, showHidden } = useFileStore();
+  const actions = useMemo<Action[]>(() => {
+    const a: Action[] = [
+      { id: "connect", label: "New connection…", shortcut: `${mod}+N`, group: "Connections", icon: <Plug size={14} />, run: () => ui.setConnectModal(true) },
+      { id: "vault", label: "Open ZVault", group: "Connections", icon: <KeyRound size={14} />, run: () => ui.setVaultModal(true) },
+    ];
+    if (vaultUnlocked) a.push({ id: "lock", label: "Lock ZVault", group: "Connections", icon: <Lock size={14} />, run: () => lockVault() });
+    for (const c of connections) {
+      if (c.id !== activeSessionId) a.push({ id: `sw-${c.id}`, label: `Switch to ${c.label}`, hint: `${c.username}@${c.host}`, group: "Sessions", icon: <Server size={14} />, run: () => setActiveSession(c.id) });
+    }
+    if (activeSessionId) {
+      a.push({ id: "term", label: "New terminal", shortcut: `${mod}+Shift+T`, group: "Sessions", icon: <SquareTerminal size={14} />, run: () => { ui.setActiveTab("terminal"); openTerminalTab(activeSessionId); } });
+      a.push({ id: "dc", label: "Disconnect current session", shortcut: `${mod}+Shift+D`, group: "Sessions", icon: <Unplug size={14} />, run: () => disconnectFromServer(activeSessionId) });
+    }
+    for (const s of servers) {
+      a.push({ id: `srv-${s.id}`, label: `Connect to ${s.label}`, hint: `${s.username}@${s.host}`, group: "Saved servers", icon: <Server size={14} />, run: () => ui.setConnectModal(true, s) });
+    }
+    for (const c of credentials) {
+      a.push({
+        id: `cred-${c.id}`, label: `Connect to ${c.label}`, hint: `ZVault · ${c.username}@${c.host}`, group: "Saved servers", icon: <KeyRound size={14} />,
+        run: () => connectVault(c.id).then((r) => { if (r.kind === "host_key") ui.setVaultModal(true); }).catch((e) => toast.error(`Couldn't connect to ${c.label}`, errMsg(e))),
+      });
+    }
+    a.push(
+      { id: "files", label: "Go to Files", group: "Navigate", icon: <FolderTree size={14} />, run: () => ui.setActiveTab("files") },
+      { id: "terminal", label: "Go to Terminal", group: "Navigate", icon: <SquareTerminal size={14} />, run: () => ui.setActiveTab("terminal") },
+      { id: "sync", label: "Go to Sync", group: "Navigate", icon: <RefreshCw size={14} />, run: () => ui.setActiveTab("sync") },
+      { id: "transfers", label: "Go to Transfers", group: "Navigate", icon: <ArrowLeftRight size={14} />, run: () => ui.setActiveTab("transfers") },
+      { id: "settings", label: "Settings", shortcut: `${mod}+,`, group: "Navigate", icon: <Settings size={14} />, run: () => ui.setActiveTab("settings") },
+      { id: "drawer", label: "Show transfer queue", shortcut: `${mod}+J`, group: "Files", icon: <ArrowLeftRight size={14} />, run: () => ui.setTransferDrawer(true) },
+      { id: "refresh", label: "Refresh both panes", shortcut: "F5", group: "Files", icon: <RefreshCw size={14} />, run: () => { fs.refreshLocal(); if (activeSessionId) fs.refreshRemote(activeSessionId); } },
+      { id: "hidden", label: fs.showHidden ? "Hide hidden files" : "Show hidden files", group: "Files", icon: <Eye size={14} />, run: () => fs.toggleHidden() },
+    );
+    return a;
+  }, [connections, activeSessionId, servers, credentials, vaultUnlocked, fs.showHidden, mod]);
 
-  const actions: PaletteAction[] = [
-    { label: "New Connection", description: "Open connect dialog", shortcut: "Ctrl+N", group: "Connections", action: () => { setConnectModal(true); onClose(); } },
-    { label: "Open ZVault", description: "Manage saved credentials", group: "Connections", action: () => { setVaultModal(true); onClose(); } },
-    ...(activeSessionId ? [
-      { label: "Disconnect", description: "Disconnect active session", shortcut: "Ctrl+D", group: "Connections", action: () => { disconnectFromServer(activeSessionId); onClose(); } },
-    ] : []),
-    { label: "Go to Files", group: "Navigation", action: () => { setActiveTab("files"); onClose(); } },
-    { label: "Go to Terminal", group: "Navigation", action: () => { setActiveTab("terminal"); onClose(); } },
-    { label: "Go to Transfers", group: "Navigation", shortcut: "Ctrl+T", action: () => { setActiveTab("transfers"); onClose(); } },
-    { label: "Go to Sync", group: "Navigation", action: () => { setActiveTab("sync"); onClose(); } },
-    { label: "Go to Settings", group: "Navigation", action: () => { setActiveTab("settings"); onClose(); } },
-    { label: "Refresh Files", description: "Reload both panes", shortcut: "F5", group: "Files", action: () => { refreshLocal(); if (activeSessionId) refreshRemote(activeSessionId); onClose(); } },
-    { label: showHidden ? "Hide Hidden Files" : "Show Hidden Files", group: "Files", action: () => { toggleHidden(); onClose(); } },
-    { label: "Toggle Transfer Drawer", shortcut: "Ctrl+T", group: "Transfers", action: () => { toggleTransferDrawer(); onClose(); } },
-  ];
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => actions.map((a) => ({ a, s: Math.max(score(q, a.label), score(q, a.hint ?? "") * 0.8) })).filter((x) => x.s > 0).sort((x, y) => (q ? y.s - x.s : 0)).map((x) => x.a),
+    [actions, q],
+  );
 
-  const filtered = query.trim()
-    ? actions.filter((a) =>
-        a.label.toLowerCase().includes(query.toLowerCase()) ||
-        a.description?.toLowerCase().includes(query.toLowerCase()) ||
-        a.group.toLowerCase().includes(query.toLowerCase())
-      )
-    : actions;
+  useEffect(() => setSel(0), [query]);
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      requestAnimationFrame(() => input.current?.focus());
+    }
+  }, [open]);
+  useEffect(() => {
+    list.current?.querySelector(`[data-idx="${sel}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [sel]);
 
-  useEffect(() => { setSelectedIdx(0); }, [query]);
-  useEffect(() => { if (open) { setQuery(""); inputRef.current?.focus(); } }, [open]);
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1)); }
-    if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIdx((i) => Math.max(i - 1, 0)); }
-    if (e.key === "Enter") { e.preventDefault(); filtered[selectedIdx]?.action(); }
-    if (e.key === "Escape") onClose();
+  function run(a: Action) {
+    onClose();
+    a.run();
   }
 
-  const groups = Array.from(new Set(filtered.map((a) => a.group)));
-
-  return (
+  let lastGroup = "";
+  return createPortal(
     <AnimatePresence>
       {open && (
-        <>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.1 }}
+          className="fixed inset-0 z-[300] flex justify-center bg-black/45 pt-[12vh]"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        >
           <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="fixed inset-0 z-[600] bg-black/50 backdrop-blur-sm"
-          />
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 450, damping: 30 }}
-            className="fixed left-1/2 top-24 z-[610] w-[520px] -translate-x-1/2 bg-void-800 border border-void-500 rounded-xl shadow-2xl overflow-hidden"
+            role="dialog"
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.12 }}
+            className="flex h-fit max-h-[60vh] w-[560px] max-w-[92vw] flex-col overflow-hidden rounded-xl bg-void-800 shadow-modal"
           >
-            {}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-void-600">
-              <Search size={14} className="text-slate-500 shrink-0" />
+            <div className="flex items-center gap-2.5 border-b border-void-600 px-4">
+              <Search size={15} className="text-slate-500" />
               <input
-                ref={inputRef}
+                ref={input}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a command…"
-                className="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-600 outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { e.preventDefault(); onClose(); }
+                  if (e.key === "ArrowDown") { e.preventDefault(); setSel((i) => Math.min(i + 1, filtered.length - 1)); }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setSel((i) => Math.max(i - 1, 0)); }
+                  if (e.key === "Enter" && filtered[sel]) { e.preventDefault(); run(filtered[sel]); }
+                }}
+                placeholder="Type a command or server name…"
+                spellCheck={false}
+                className="h-12 flex-1 bg-transparent text-[14px] text-slate-100 outline-none"
               />
-              <kbd className="text-[10px] px-1.5 py-0.5 bg-void-700 border border-void-500 rounded text-slate-500 font-mono">ESC</kbd>
+              <span className="kbd">Esc</span>
             </div>
-
-            {}
-            <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
-              {filtered.length === 0 ? (
-                <p className="text-center text-xs text-slate-600 py-8">No commands found</p>
-              ) : (
-                groups.map((group) => {
-                  const groupItems = filtered.filter((a) => a.group === group);
-                  const startIdx = filtered.indexOf(groupItems[0]);
-                  return (
-                    <div key={group}>
-                      <p className="px-4 py-1 text-[10px] text-slate-600 font-semibold uppercase tracking-wider">{group}</p>
-                      {groupItems.map((item, i) => {
-                        const globalIdx = startIdx + i;
-                        return (
-                          <button
-                            key={item.label}
-                            onClick={item.action}
-                            onMouseEnter={() => setSelectedIdx(globalIdx)}
-                            className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${
-                              selectedIdx === globalIdx ? "bg-pylon-cyan/10 text-slate-100" : "text-slate-300 hover:bg-void-700"
-                            }`}
-                          >
-                            <Command size={12} className="text-slate-600 shrink-0" />
-                            <span className="text-sm flex-1">{item.label}</span>
-                            {item.description && (
-                              <span className="text-xs text-slate-600 hidden md:block">{item.description}</span>
-                            )}
-                            {item.shortcut && (
-                              <kbd className="text-[10px] px-1.5 py-0.5 bg-void-700 border border-void-600 rounded text-slate-500 font-mono shrink-0">
-                                {item.shortcut}
-                              </kbd>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })
-              )}
+            <div ref={list} className="min-h-0 overflow-y-auto p-1.5">
+              {filtered.length === 0 && <p className="px-3 py-6 text-center text-xs text-slate-500">No matching commands</p>}
+              {filtered.map((a, i) => {
+                const header = !q && a.group !== lastGroup ? a.group : null;
+                lastGroup = a.group;
+                return (
+                  <div key={a.id}>
+                    {header && <div className="px-2.5 pb-1 pt-2.5 text-[11px] font-medium text-slate-500">{header}</div>}
+                    <button
+                      data-idx={i}
+                      onMouseMove={() => setSel(i)}
+                      onClick={() => run(a)}
+                      className={`flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-left text-[13px] ${i === sel ? "bg-void-600 text-slate-50" : "text-slate-300"}`}
+                    >
+                      <span className="text-slate-400">{a.icon}</span>
+                      <span className="truncate">{a.label}</span>
+                      {a.hint && <span className="truncate text-xs text-slate-500">{a.hint}</span>}
+                      <span className="flex-1" />
+                      {a.shortcut && <span className="shrink-0 text-[11px] text-slate-500">{a.shortcut}</span>}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </motion.div>
-        </>
+        </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

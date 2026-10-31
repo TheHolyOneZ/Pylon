@@ -2,12 +2,16 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { LocalEntry, RemoteEntry, SortState, FileViewMode, Bookmark } from "../types";
 import * as api from "../lib/tauri";
+import { errMsg } from "../lib/format";
+import { normalizeLocal } from "../lib/path";
 
 export type OverwritePolicy = "ask" | "overwrite_all" | "skip_all";
+export type Pane = "local" | "remote";
 
 interface FileStore {
   localPath: string;
   remotePath: string;
+  remotePathBySession: Record<string, string>;
   localHistory: string[];
   remoteHistory: string[];
   localHistoryIndex: number;
@@ -21,12 +25,16 @@ interface FileStore {
   remoteAllCount: number;
   localLoading: boolean;
   remoteLoading: boolean;
+  localError: string | null;
   remoteError: string | null;
 
   selectedLocal: Set<string>;
   selectedRemote: Set<string>;
   lastClickedLocalIndex: number;
   lastClickedRemoteIndex: number;
+  cursorLocal: string | null;
+  cursorRemote: string | null;
+  activePane: Pane;
 
   localSort: SortState;
   remoteSort: SortState;
@@ -35,14 +43,21 @@ interface FileStore {
   showHidden: boolean;
   localFilter: string;
   remoteFilter: string;
+  localRegexMode: boolean;
+  remoteRegexMode: boolean;
 
   bookmarks: Bookmark[];
 
   overwritePolicy: OverwritePolicy;
   setOverwritePolicy: (p: OverwritePolicy) => void;
 
+  setActivePane: (p: Pane) => void;
+  setCursor: (pane: Pane, path: string | null) => void;
+
   navigateLocal: (path: string, addHistory?: boolean) => Promise<void>;
   navigateRemote: (sessionId: string, path: string, addHistory?: boolean) => Promise<void>;
+  openSession: (sessionId: string, fallbackPath: string) => Promise<void>;
+  forgetSession: (sessionId: string) => void;
   navigateLocalBack: () => Promise<void>;
   navigateLocalForward: () => Promise<void>;
   navigateRemoteBack: (sessionId: string) => Promise<void>;
@@ -52,6 +67,7 @@ interface FileStore {
 
   selectLocal: (path: string, index: number, shift: boolean, ctrl: boolean) => void;
   selectRemote: (path: string, index: number, shift: boolean, ctrl: boolean) => void;
+  setSelection: (pane: Pane, paths: string[]) => void;
   selectAllLocal: () => void;
   selectAllRemote: () => void;
   clearSelection: () => void;
@@ -61,8 +77,6 @@ interface FileStore {
 
   setViewMode: (m: FileViewMode) => void;
   toggleHidden: () => void;
-  localRegexMode: boolean;
-  remoteRegexMode: boolean;
   setLocalFilter: (f: string) => void;
   setRemoteFilter: (f: string) => void;
   setLocalRegexMode: (v: boolean) => void;
@@ -72,9 +86,11 @@ interface FileStore {
   removeBookmark: (id: string) => void;
 }
 
-function applyHiddenFilter<T extends { name: string }>(entries: T[], showHidden: boolean): T[] {
-  if (!showHidden) return entries.filter((e) => !e.name.startsWith("."));
-  return entries;
+type Named = { name: string; hidden?: boolean };
+
+function applyHiddenFilter<T extends Named>(entries: T[], showHidden: boolean): T[] {
+  if (showHidden) return entries;
+  return entries.filter((e) => !(e.hidden ?? e.name.startsWith(".")));
 }
 
 export function applyTextFilter<T extends { name: string }>(entries: T[], filter: string, regexMode = false): T[] {
@@ -92,14 +108,15 @@ export function applyTextFilter<T extends { name: string }>(entries: T[], filter
     .map((e) => {
       const n = e.name.toLowerCase();
       const sub = n.indexOf(q);
-      if (sub >= 0) return { e, score: 200 - sub + (sub === 0 ? 100 : 0) };
-      let qi = 0, consec = 0, maxConsec = 0, last = -1;
+      if (sub >= 0) return { e, score: 1000 - sub + (sub === 0 ? 500 : 0) };
+      let qi = 0, consec = 0, maxConsec = 0, last = -2;
       for (let ni = 0; ni < n.length && qi < q.length; ni++) {
         if (n[ni] === q[qi]) {
           consec = last === ni - 1 ? consec + 1 : 1;
           maxConsec = Math.max(maxConsec, consec);
-          last = ni; qi++;
-        } else { consec = 0; }
+          last = ni;
+          qi++;
+        }
       }
       if (qi < q.length) return null;
       return { e, score: maxConsec };
@@ -109,277 +126,266 @@ export function applyTextFilter<T extends { name: string }>(entries: T[], filter
   return scored.map((x) => x.e);
 }
 
-function sortEntries<T extends { name: string; size: number | null; modified: number | null; is_dir: boolean }>(
-  entries: T[],
-  sort: SortState
-): T[] {
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function sortEntries<T extends { name: string; size: number | null; modified: number | null; is_dir: boolean }>(entries: T[], sort: SortState): T[] {
   const dir = sort.dir === "asc" ? 1 : -1;
+  const ext = (n: string) => (n.lastIndexOf(".") > 0 ? n.slice(n.lastIndexOf(".") + 1).toLowerCase() : "");
   return [...entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let r = 0;
     switch (sort.field) {
-      case "size":     return dir * ((a.size ?? 0) - (b.size ?? 0));
-      case "modified": return dir * ((a.modified ?? 0) - (b.modified ?? 0));
-      case "type": {
-        const extA = a.name.includes(".") ? a.name.split(".").pop()! : "";
-        const extB = b.name.includes(".") ? b.name.split(".").pop()! : "";
-        return dir * extA.localeCompare(extB);
-      }
-      default: return dir * a.name.localeCompare(b.name);
+      case "size": r = (a.size ?? 0) - (b.size ?? 0); break;
+      case "modified": r = (a.modified ?? 0) - (b.modified ?? 0); break;
+      case "type": r = collator.compare(ext(a.name), ext(b.name)); break;
     }
+    return dir * (r || collator.compare(a.name, b.name));
   });
 }
 
-function buildLocal(raw: LocalEntry[], filter: string, showHidden: boolean, sort: SortState, regexMode = false) {
-  const hidden = applyHiddenFilter(raw, showHidden);
-  return {
-    localRawEntries: raw,
-    localAllCount: hidden.length,
-    localEntries: sortEntries(applyTextFilter(hidden, filter, regexMode), sort),
-  };
+function view<T extends Named & { size: number | null; modified: number | null; is_dir: boolean }>(
+  raw: T[], filter: string, showHidden: boolean, sort: SortState, regex: boolean,
+) {
+  const visible = applyHiddenFilter(raw, showHidden);
+  const filtered = applyTextFilter(visible, filter, regex);
+  return { all: visible.length, entries: filter.trim() && !regex ? filtered : sortEntries(filtered, sort) };
 }
 
-function buildRemote(raw: RemoteEntry[], filter: string, showHidden: boolean, sort: SortState, regexMode = false) {
-  const hidden = applyHiddenFilter(raw, showHidden);
-  return {
-    remoteRawEntries: raw,
-    remoteAllCount: hidden.length,
-    remoteEntries: sortEntries(applyTextFilter(hidden, filter, regexMode), sort),
-  };
-}
+let localReq = 0;
+let remoteReq = 0;
 
 export const useFileStore = create<FileStore>()(
   persist(
-    (set, get) => ({
-      localPath: "/",
-      remotePath: "/",
-      localHistory: ["/"],
-      remoteHistory: ["/"],
-      localHistoryIndex: 0,
-      remoteHistoryIndex: 0,
+    (set, get) => {
+      const buildLocal = (raw: LocalEntry[]) => {
+        const s = get();
+        const v = view(raw, s.localFilter, s.showHidden, s.localSort, s.localRegexMode);
+        return { localRawEntries: raw, localAllCount: v.all, localEntries: v.entries };
+      };
+      const buildRemote = (raw: RemoteEntry[]) => {
+        const s = get();
+        const v = view(raw, s.remoteFilter, s.showHidden, s.remoteSort, s.remoteRegexMode);
+        return { remoteRawEntries: raw, remoteAllCount: v.all, remoteEntries: v.entries };
+      };
+      const rebuildLocal = () => set(buildLocal(get().localRawEntries));
+      const rebuildRemote = () => set(buildRemote(get().remoteRawEntries));
 
-      localEntries: [],
-      remoteEntries: [],
-      localRawEntries: [],
-      remoteRawEntries: [],
-      localAllCount: 0,
-      remoteAllCount: 0,
-      localLoading: false,
-      remoteLoading: false,
-      remoteError: null,
-
-      selectedLocal: new Set(),
-      selectedRemote: new Set(),
-      lastClickedLocalIndex: -1,
-      lastClickedRemoteIndex: -1,
-
-      localSort: { field: "name", dir: "asc" },
-      remoteSort: { field: "name", dir: "asc" },
-
-      viewMode: "list",
-      showHidden: false,
-      localFilter: "",
-      remoteFilter: "",
-      localRegexMode: false,
-      remoteRegexMode: false,
-
-      bookmarks: [],
-
-      overwritePolicy: "ask" as OverwritePolicy,
-      setOverwritePolicy: (p) => set({ overwritePolicy: p }),
-
-      navigateLocal: async (path, addHistory = true) => {
-        set((s) => {
-          const history = addHistory
-            ? [...s.localHistory.slice(0, s.localHistoryIndex + 1), path]
-            : s.localHistory;
-          const idx = addHistory ? history.length - 1 : s.localHistoryIndex;
-          return { localLoading: true, localPath: path, selectedLocal: new Set(), localHistory: history, localHistoryIndex: idx };
-        });
+      const loadLocal = async (path: string) => {
+        const req = ++localReq;
+        set({ localLoading: true });
         try {
           const raw = await api.listLocalDir(path);
-          const { localSort, showHidden, localFilter, localRegexMode } = get();
-          set(buildLocal(raw, localFilter, showHidden, localSort, localRegexMode));
+          if (req !== localReq) return;
+          set({ ...buildLocal(raw), localError: null });
+        } catch (e) {
+          if (req !== localReq) return;
+          set({ localRawEntries: [], localEntries: [], localAllCount: 0, localError: errMsg(e) });
         } finally {
-          set({ localLoading: false });
+          if (req === localReq) set({ localLoading: false });
         }
-      },
+      };
 
-      navigateRemote: async (sessionId, path, addHistory = true) => {
-        set((s) => {
-          const history = addHistory
-            ? [...s.remoteHistory.slice(0, s.remoteHistoryIndex + 1), path]
-            : s.remoteHistory;
-          const idx = addHistory ? history.length - 1 : s.remoteHistoryIndex;
-          return { remoteLoading: true, remotePath: path, remoteError: null, selectedRemote: new Set(), remoteHistory: history, remoteHistoryIndex: idx };
-        });
+      const loadRemote = async (sessionId: string, path: string) => {
+        const req = ++remoteReq;
+        set({ remoteLoading: true });
         try {
           const raw = await api.listRemoteDir(sessionId, path);
-          const { remoteSort, showHidden, remoteFilter, remoteRegexMode } = get();
-          set({ ...buildRemote(raw, remoteFilter, showHidden, remoteSort, remoteRegexMode), remoteError: null });
-        } catch (e: any) {
-          set({ remoteEntries: [], remoteError: String(e?.message ?? e) });
+          if (req !== remoteReq) return;
+          set({ ...buildRemote(raw), remoteError: null });
+        } catch (e) {
+          if (req !== remoteReq) return;
+          set({ remoteRawEntries: [], remoteEntries: [], remoteAllCount: 0, remoteError: errMsg(e) });
         } finally {
-          set({ remoteLoading: false });
+          if (req === remoteReq) set({ remoteLoading: false });
         }
-      },
+      };
 
-      navigateLocalBack: async () => {
-        const { localHistory, localHistoryIndex } = get();
-        if (localHistoryIndex <= 0) return;
-        const newIdx = localHistoryIndex - 1;
-        set({ localHistoryIndex: newIdx });
-        await get().navigateLocal(localHistory[newIdx], false);
-      },
+      return {
+        localPath: "/",
+        remotePath: "/",
+        remotePathBySession: {},
+        localHistory: [],
+        remoteHistory: [],
+        localHistoryIndex: -1,
+        remoteHistoryIndex: -1,
 
-      navigateLocalForward: async () => {
-        const { localHistory, localHistoryIndex } = get();
-        if (localHistoryIndex >= localHistory.length - 1) return;
-        const newIdx = localHistoryIndex + 1;
-        set({ localHistoryIndex: newIdx });
-        await get().navigateLocal(localHistory[newIdx], false);
-      },
+        localEntries: [],
+        remoteEntries: [],
+        localRawEntries: [],
+        remoteRawEntries: [],
+        localAllCount: 0,
+        remoteAllCount: 0,
+        localLoading: false,
+        remoteLoading: false,
+        localError: null,
+        remoteError: null,
 
-      navigateRemoteBack: async (sessionId) => {
-        const { remoteHistory, remoteHistoryIndex } = get();
-        if (remoteHistoryIndex <= 0) return;
-        const newIdx = remoteHistoryIndex - 1;
-        set({ remoteHistoryIndex: newIdx });
-        await get().navigateRemote(sessionId, remoteHistory[newIdx], false);
-      },
+        selectedLocal: new Set(),
+        selectedRemote: new Set(),
+        lastClickedLocalIndex: -1,
+        lastClickedRemoteIndex: -1,
+        cursorLocal: null,
+        cursorRemote: null,
+        activePane: "local",
 
-      navigateRemoteForward: async (sessionId) => {
-        const { remoteHistory, remoteHistoryIndex } = get();
-        if (remoteHistoryIndex >= remoteHistory.length - 1) return;
-        const newIdx = remoteHistoryIndex + 1;
-        set({ remoteHistoryIndex: newIdx });
-        await get().navigateRemote(sessionId, remoteHistory[newIdx], false);
-      },
+        localSort: { field: "name", dir: "asc" },
+        remoteSort: { field: "name", dir: "asc" },
 
-      refreshLocal: async () => {
-        const { localPath, localSort, showHidden, localFilter, localRegexMode } = get();
-        const raw = await api.listLocalDir(localPath);
-        set(buildLocal(raw, localFilter, showHidden, localSort, localRegexMode));
-      },
+        viewMode: "list",
+        showHidden: false,
+        localFilter: "",
+        remoteFilter: "",
+        localRegexMode: false,
+        remoteRegexMode: false,
 
-      refreshRemote: async (sessionId) => {
-        const { remotePath, remoteSort, showHidden, remoteFilter, remoteRegexMode } = get();
-        try {
-          const raw = await api.listRemoteDir(sessionId, remotePath);
-          set({ ...buildRemote(raw, remoteFilter, showHidden, remoteSort, remoteRegexMode), remoteError: null });
-        } catch (e: any) {
-          set({ remoteEntries: [], remoteError: String(e?.message ?? e) });
-        }
-      },
+        bookmarks: [],
 
-      selectLocal: (path, index, shift, ctrl) => {
-        set((s) => {
-          const next = new Set(s.selectedLocal);
-          if (shift && s.lastClickedLocalIndex >= 0) {
-            const entries = s.localEntries;
-            const lo = Math.min(s.lastClickedLocalIndex, index);
-            const hi = Math.max(s.lastClickedLocalIndex, index);
-            for (let i = lo; i <= hi; i++) next.add(entries[i].path);
-          } else if (ctrl) {
-            next.has(path) ? next.delete(path) : next.add(path);
-          } else {
-            next.clear();
-            next.add(path);
-          }
-          return { selectedLocal: next, lastClickedLocalIndex: index };
-        });
-      },
+        overwritePolicy: "ask",
+        setOverwritePolicy: (p) => set({ overwritePolicy: p }),
 
-      selectRemote: (path, index, shift, ctrl) => {
-        set((s) => {
-          const next = new Set(s.selectedRemote);
-          if (shift && s.lastClickedRemoteIndex >= 0) {
-            const entries = s.remoteEntries;
-            const lo = Math.min(s.lastClickedRemoteIndex, index);
-            const hi = Math.max(s.lastClickedRemoteIndex, index);
-            for (let i = lo; i <= hi; i++) next.add(entries[i].path);
-          } else if (ctrl) {
-            next.has(path) ? next.delete(path) : next.add(path);
-          } else {
-            next.clear();
-            next.add(path);
-          }
-          return { selectedRemote: next, lastClickedRemoteIndex: index };
-        });
-      },
+        setActivePane: (p) => { if (get().activePane !== p) set({ activePane: p }); },
+        setCursor: (pane, path) => set(pane === "local" ? { cursorLocal: path } : { cursorRemote: path }),
 
-      selectAllLocal: () =>
-        set((s) => ({ selectedLocal: new Set(s.localEntries.map((e) => e.path)) })),
+        navigateLocal: async (rawPath, addHistory = true) => {
+          const path = normalizeLocal(rawPath);
+          set((s) => {
+            const history = addHistory && s.localHistory[s.localHistoryIndex] !== path
+              ? [...s.localHistory.slice(0, s.localHistoryIndex + 1), path].slice(-100)
+              : s.localHistory;
+            return {
+              localPath: path,
+              selectedLocal: new Set(),
+              cursorLocal: null,
+              lastClickedLocalIndex: -1,
+              localFilter: "",
+              localHistory: history,
+              localHistoryIndex: addHistory ? history.length - 1 : s.localHistoryIndex,
+            };
+          });
+          await loadLocal(path);
+        },
 
-      selectAllRemote: () =>
-        set((s) => ({ selectedRemote: new Set(s.remoteEntries.map((e) => e.path)) })),
+        navigateRemote: async (sessionId, path, addHistory = true) => {
+          set((s) => {
+            const history = addHistory && s.remoteHistory[s.remoteHistoryIndex] !== path
+              ? [...s.remoteHistory.slice(0, s.remoteHistoryIndex + 1), path].slice(-100)
+              : s.remoteHistory;
+            return {
+              remotePath: path,
+              remotePathBySession: { ...s.remotePathBySession, [sessionId]: path },
+              selectedRemote: new Set(),
+              cursorRemote: null,
+              lastClickedRemoteIndex: -1,
+              remoteFilter: "",
+              remoteHistory: history,
+              remoteHistoryIndex: addHistory ? history.length - 1 : s.remoteHistoryIndex,
+            };
+          });
+          await loadRemote(sessionId, path);
+        },
 
-      clearSelection: () =>
-        set({ selectedLocal: new Set(), selectedRemote: new Set() }),
+        openSession: async (sessionId, fallbackPath) => {
+          const path = get().remotePathBySession[sessionId] ?? fallbackPath;
+          set({ remoteHistory: [], remoteHistoryIndex: -1, remoteRawEntries: [], remoteEntries: [], remoteError: null });
+          await get().navigateRemote(sessionId, path);
+        },
 
-      setLocalSort: (field) =>
-        set((s) => {
-          const dir = s.localSort.field === field && s.localSort.dir === "asc" ? "desc" : "asc";
-          const sort: SortState = { field, dir };
-          const hidden = applyHiddenFilter(s.localRawEntries, s.showHidden);
-          return { localSort: sort, localEntries: sortEntries(applyTextFilter(hidden, s.localFilter, s.localRegexMode), sort) };
-        }),
+        forgetSession: (sessionId) =>
+          set((s) => {
+            const { [sessionId]: _gone, ...rest } = s.remotePathBySession;
+            return { remotePathBySession: rest };
+          }),
 
-      setRemoteSort: (field) =>
-        set((s) => {
-          const dir = s.remoteSort.field === field && s.remoteSort.dir === "asc" ? "desc" : "asc";
-          const sort: SortState = { field, dir };
-          const hidden = applyHiddenFilter(s.remoteRawEntries, s.showHidden);
-          return { remoteSort: sort, remoteEntries: sortEntries(applyTextFilter(hidden, s.remoteFilter, s.remoteRegexMode), sort) };
-        }),
+        navigateLocalBack: async () => {
+          const { localHistory, localHistoryIndex } = get();
+          if (localHistoryIndex <= 0) return;
+          set({ localHistoryIndex: localHistoryIndex - 1 });
+          await get().navigateLocal(localHistory[localHistoryIndex - 1], false);
+        },
+        navigateLocalForward: async () => {
+          const { localHistory, localHistoryIndex } = get();
+          if (localHistoryIndex >= localHistory.length - 1) return;
+          set({ localHistoryIndex: localHistoryIndex + 1 });
+          await get().navigateLocal(localHistory[localHistoryIndex + 1], false);
+        },
+        navigateRemoteBack: async (sessionId) => {
+          const { remoteHistory, remoteHistoryIndex } = get();
+          if (remoteHistoryIndex <= 0) return;
+          set({ remoteHistoryIndex: remoteHistoryIndex - 1 });
+          await get().navigateRemote(sessionId, remoteHistory[remoteHistoryIndex - 1], false);
+        },
+        navigateRemoteForward: async (sessionId) => {
+          const { remoteHistory, remoteHistoryIndex } = get();
+          if (remoteHistoryIndex >= remoteHistory.length - 1) return;
+          set({ remoteHistoryIndex: remoteHistoryIndex + 1 });
+          await get().navigateRemote(sessionId, remoteHistory[remoteHistoryIndex + 1], false);
+        },
 
-      setViewMode: (m) => set({ viewMode: m }),
+        refreshLocal: () => loadLocal(get().localPath),
+        refreshRemote: (sessionId) => loadRemote(sessionId, get().remotePath),
 
-      toggleHidden: () =>
-        set((s) => {
-          const showHidden = !s.showHidden;
-          const lh = applyHiddenFilter(s.localRawEntries, showHidden);
-          const rh = applyHiddenFilter(s.remoteRawEntries, showHidden);
-          return {
-            showHidden,
-            localAllCount: lh.length,
-            remoteAllCount: rh.length,
-            localEntries: sortEntries(applyTextFilter(lh, s.localFilter, s.localRegexMode), s.localSort),
-            remoteEntries: sortEntries(applyTextFilter(rh, s.remoteFilter, s.remoteRegexMode), s.remoteSort),
-          };
-        }),
+        selectLocal: (path, index, shift, ctrl) =>
+          set((s) => {
+            const next = new Set(ctrl || shift ? s.selectedLocal : []);
+            if (shift && s.lastClickedLocalIndex >= 0) {
+              const [lo, hi] = [Math.min(s.lastClickedLocalIndex, index), Math.max(s.lastClickedLocalIndex, index)];
+              for (let i = lo; i <= hi; i++) if (s.localEntries[i]) next.add(s.localEntries[i].path);
+            } else if (ctrl) {
+              next.has(path) ? next.delete(path) : next.add(path);
+            } else {
+              next.add(path);
+            }
+            return { selectedLocal: next, cursorLocal: path, lastClickedLocalIndex: shift ? s.lastClickedLocalIndex : index, activePane: "local" };
+          }),
 
-      setLocalFilter: (f) =>
-        set((s) => {
-          const hidden = applyHiddenFilter(s.localRawEntries, s.showHidden);
-          return { localFilter: f, localEntries: sortEntries(applyTextFilter(hidden, f, s.localRegexMode), s.localSort) };
-        }),
+        selectRemote: (path, index, shift, ctrl) =>
+          set((s) => {
+            const next = new Set(ctrl || shift ? s.selectedRemote : []);
+            if (shift && s.lastClickedRemoteIndex >= 0) {
+              const [lo, hi] = [Math.min(s.lastClickedRemoteIndex, index), Math.max(s.lastClickedRemoteIndex, index)];
+              for (let i = lo; i <= hi; i++) if (s.remoteEntries[i]) next.add(s.remoteEntries[i].path);
+            } else if (ctrl) {
+              next.has(path) ? next.delete(path) : next.add(path);
+            } else {
+              next.add(path);
+            }
+            return { selectedRemote: next, cursorRemote: path, lastClickedRemoteIndex: shift ? s.lastClickedRemoteIndex : index, activePane: "remote" };
+          }),
 
-      setRemoteFilter: (f) =>
-        set((s) => {
-          const hidden = applyHiddenFilter(s.remoteRawEntries, s.showHidden);
-          return { remoteFilter: f, remoteEntries: sortEntries(applyTextFilter(hidden, f, s.remoteRegexMode), s.remoteSort) };
-        }),
+        setSelection: (pane, paths) =>
+          set(pane === "local" ? { selectedLocal: new Set(paths) } : { selectedRemote: new Set(paths) }),
 
-      setLocalRegexMode: (v) =>
-        set((s) => {
-          const hidden = applyHiddenFilter(s.localRawEntries, s.showHidden);
-          return { localRegexMode: v, localEntries: sortEntries(applyTextFilter(hidden, s.localFilter, v), s.localSort) };
-        }),
+        selectAllLocal: () => set((s) => ({ selectedLocal: new Set(s.localEntries.map((e) => e.path)) })),
+        selectAllRemote: () => set((s) => ({ selectedRemote: new Set(s.remoteEntries.map((e) => e.path)) })),
+        clearSelection: () => set({ selectedLocal: new Set(), selectedRemote: new Set() }),
 
-      setRemoteRegexMode: (v) =>
-        set((s) => {
-          const hidden = applyHiddenFilter(s.remoteRawEntries, s.showHidden);
-          return { remoteRegexMode: v, remoteEntries: sortEntries(applyTextFilter(hidden, s.remoteFilter, v), s.remoteSort) };
-        }),
+        setLocalSort: (field) => {
+          const s = get().localSort;
+          set({ localSort: { field, dir: s.field === field && s.dir === "asc" ? "desc" : "asc" } });
+          rebuildLocal();
+        },
+        setRemoteSort: (field) => {
+          const s = get().remoteSort;
+          set({ remoteSort: { field, dir: s.field === field && s.dir === "asc" ? "desc" : "asc" } });
+          rebuildRemote();
+        },
 
-      addBookmark: (label, path, side) => {
-        const id = `bm-${Date.now()}`;
-        set((s) => ({ bookmarks: [...s.bookmarks, { id, label, path, side }] }));
-      },
+        setViewMode: (m) => set({ viewMode: m }),
+        toggleHidden: () => {
+          set((s) => ({ showHidden: !s.showHidden }));
+          rebuildLocal();
+          rebuildRemote();
+        },
+        setLocalFilter: (f) => { set({ localFilter: f }); rebuildLocal(); },
+        setRemoteFilter: (f) => { set({ remoteFilter: f }); rebuildRemote(); },
+        setLocalRegexMode: (v) => { set({ localRegexMode: v }); rebuildLocal(); },
+        setRemoteRegexMode: (v) => { set({ remoteRegexMode: v }); rebuildRemote(); },
 
-      removeBookmark: (id) =>
-        set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) })),
-    }),
+        addBookmark: (label, path, side) =>
+          set((s) => ({ bookmarks: [...s.bookmarks, { id: `bm-${Date.now()}`, label, path, side }] })),
+        removeBookmark: (id) => set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) })),
+      };
+    },
     {
       name: "pylon-file-store",
       partialize: (s) => ({
@@ -390,6 +396,6 @@ export const useFileStore = create<FileStore>()(
         showHidden: s.showHidden,
         bookmarks: s.bookmarks,
       }),
-    }
-  )
+    },
+  ),
 );

@@ -1,4 +1,3 @@
-
 import { create } from "zustand";
 import { basename, dirname } from "../lib/path";
 
@@ -172,7 +171,6 @@ export function handleTransferNew(record: {
   const { addGhost, registerBatchFile } = useGhostStore.getState();
 
   if (record.batch_id) {
-
     registerBatchFile(record.id, record.batch_id);
     return;
   }
@@ -199,8 +197,8 @@ export function handleTransferProgress(p: {
   const batchId = store.batchMap[p.id];
 
   if (batchId) {
-
     const isDone = p.state === "completed" || p.state === "cancelled";
+    if (p.state === "paused" || p.state === "running") { if (p.state === "running") store.progressBatchFile(p.id, p.percent, p.speed_bps); return; }
     const isFailed = typeof p.state === "object" || p.state === "failed";
 
     if (isDone || isFailed) {
@@ -233,4 +231,15 @@ export function handleTransferProgress(p: {
       state: p.state as GhostEntry["state"],
     });
   }
+}
+
+export function handleBatchDone(r: { batch_id: string; failed?: number; cancelled?: boolean }) {
+  const store = useGhostStore.getState();
+  const batch = store.batches.find((b) => b.batchId === r.batch_id);
+  if (!batch) return;
+  const failed = (r.failed ?? 0) > 0 || r.cancelled;
+  useGhostStore.setState((s) => ({
+    batches: s.batches.map((b) => (b.batchId === r.batch_id ? { ...b, state: failed ? "failed" : "completed", percent: failed ? b.percent : 100, bps: 0 } : b)),
+  }));
+  setTimeout(() => useGhostStore.getState().removeBatch(r.batch_id), failed ? 4000 : 1200);
 }

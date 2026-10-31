@@ -1,0 +1,139 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            target: ""
+            bundles: deb,rpm,appimage
+          - name: Windows
+            os: windows-latest
+            target: ""
+            bundles: nsis,msi
+          - name: macOS-AppleSilicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - name: macOS-Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: dmg
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read the version
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Building Pylon $version"
+
+      - name: Versions agree
+        run: |
+          app="${{ steps.version.outputs.value }}"
+          conf="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          crate="$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          if [ "$app" != "$conf" ] || [ "$app" != "$crate" ]; then
+            echo "::error::package.json $app, tauri.conf.json $conf, Cargo.toml $crate — bump them together."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "${GITHUB_REF_NAME#v}" != "$app" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $app."
+            exit 1
+          fi
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf xdg-utils file rpm
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: ${{ matrix.name }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check and test
+        
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          pnpm exec tsc --noEmit
+          cargo test -p pylon --no-default-features
+
+      - name: Build the installers
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          else
+            pnpm tauri build --bundles ${{ matrix.bundles }}
+          fi
+
+      - name: Check the glibc requirement
+        if: runner.os == 'Linux'
+        run: |
+          need="$(objdump -T target/release/pylon | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)"
+          echo "The binary needs $need"
+          if [ "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -1)" != "GLIBC_2.35" ]; then
+            echo "::error::$need is newer than Ubuntu 22.04's glibc 2.35."
+            exit 1
+          fi
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          if [ -n "${{ matrix.target }}" ]; then dir="target/${{ matrix.target }}/release/bundle"; else dir="target/release/bundle"; fi
+          case "$RUNNER_OS" in
+            Linux)   cp "$dir"/deb/*.deb "$dir"/rpm/*.rpm "$dir"/appimage/*.AppImage out/ ;;
+            Windows) cp "$dir"/nsis/*-setup.exe "$dir"/msi/*.msi out/ ;;
+            macOS)   cp "$dir"/dmg/*.dmg out/ ;;
+          esac
+          cd out
+          if command -v sha256sum >/dev/null; then sha256sum * > "SHA256SUMS-${{ matrix.name }}.txt"; else shasum -a 256 * > "SHA256SUMS-${{ matrix.name }}.txt"; fi
+          ls -la
+          cat SHA256SUMS-*.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pylon-${{ steps.version.outputs.value }}-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 90

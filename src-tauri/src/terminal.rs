@@ -1,30 +1,28 @@
-
-
 use std::{
     collections::HashMap,
-    io::{Read, Write},
-    net::TcpStream,
+    io::{ErrorKind, Read, Write},
     sync::{
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
     },
     thread,
+    time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::Serialize;
-use ssh2::Session;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::{
     error::{PylonError, PylonResult},
-    session::TermAuthParams,
+    ssh::{self, AuthParams},
 };
 
 #[derive(Serialize, Clone)]
 pub struct TerminalOutput {
     pub terminal_id: String,
-    pub data: Vec<u8>,
+    pub data: String,
 }
 
 enum TermCmd {
@@ -35,106 +33,74 @@ enum TermCmd {
 
 struct TermEntry {
     cmd_tx: SyncSender<TermCmd>,
-    _session_id: String,
+    session_id: String,
 }
 
+#[derive(Default)]
 pub struct TerminalRegistry {
     terminals: Arc<Mutex<HashMap<String, TermEntry>>>,
 }
 
+fn valid_shell(s: &str) -> bool {
+    !s.is_empty() && s.len() < 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))
+}
+
 impl TerminalRegistry {
     pub fn new() -> Self {
-        Self {
-            terminals: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self::default()
     }
 
     pub fn open(
         &self,
         app: AppHandle,
-        auth: TermAuthParams,
+        auth: AuthParams,
         session_id: String,
         cols: u32,
         rows: u32,
         shell: Option<String>,
     ) -> PylonResult<String> {
+        let conn = ssh::open_pinned(&auth).map_err(|e| PylonError::Terminal(e.to_string()))?;
+        let sess = conn.sess;
 
-        let addr = format!("{}:{}", auth.host, auth.port);
-        let tcp = TcpStream::connect(&addr)
-            .map_err(|e| PylonError::Terminal(format!("TCP: {e}")))?;
+        let mut ch = sess.channel_session().map_err(|e| PylonError::Terminal(format!("open channel: {e}")))?;
+        let _ = ch.setenv("COLORTERM", "truecolor");
+        ch.request_pty("xterm-256color", None, Some((cols.max(2), rows.max(2), 0, 0)))
+            .map_err(|e| PylonError::Terminal(format!("request pty: {e}")))?;
 
-        let mut sess = Session::new().map_err(|e| PylonError::Terminal(e.to_string()))?;
-        sess.set_blocking(true);
-        sess.set_timeout(30_000);
-        sess.set_tcp_stream(tcp);
-        sess.handshake().map_err(|e| PylonError::Terminal(format!("Handshake: {e}")))?;
-
-        if let Some(ref key_pem) = auth.private_key {
-            let tmp = tempfile_from_pem(key_pem)?;
-            sess.userauth_pubkey_file(&auth.username, None, tmp.as_path(), None)
-                .map_err(|e| PylonError::Terminal(format!("PubKey auth: {e}")))?;
-            let _ = std::fs::remove_file(&tmp);
-        } else if let Some(ref pw) = auth.password {
-            sess.userauth_password(&auth.username, pw)
-                .map_err(|e| PylonError::Terminal(format!("Password auth: {e}")))?;
-        } else {
-            sess.userauth_agent(&auth.username)
-                .map_err(|e| PylonError::Terminal(format!("Agent auth: {e}")))?;
-        }
-
-        if !sess.authenticated() {
-            return Err(PylonError::Terminal("Authentication failed".into()));
-        }
-
-        let mut ch = sess.channel_session()
-            .map_err(|e| PylonError::Terminal(format!("channel_session: {e}")))?;
-        ch.request_pty("xterm-256color", None, Some((cols, rows, 0, 0)))
-            .map_err(|e| PylonError::Terminal(format!("pty: {e}")))?;
-        if let Some(ref shell_path) = shell {
-            ch.exec(shell_path)
-                .map_err(|e| PylonError::Terminal(format!("exec shell: {e}")))?;
-        } else {
-            ch.shell()
-                .map_err(|e| PylonError::Terminal(format!("shell: {e}")))?;
+        match shell.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => ch.shell().map_err(|e| PylonError::Terminal(format!("start shell: {e}")))?,
+            Some(s) if valid_shell(s) => {
+                let cmd = format!(
+                    "if command -v {s} >/dev/null 2>&1; then exec {s} -l; else echo 'pylon: {s} not found, using login shell' >&2; exec \"${{SHELL:-/bin/sh}}\" -l; fi"
+                );
+                ch.exec(&cmd).map_err(|e| PylonError::Terminal(format!("start {s}: {e}")))?
+            }
+            Some(s) => return Err(PylonError::Terminal(format!("Invalid shell setting: {s}"))),
         }
 
         sess.set_blocking(false);
 
         let id = Uuid::new_v4().to_string();
-        let (cmd_tx, cmd_rx): (SyncSender<TermCmd>, Receiver<TermCmd>) = mpsc::sync_channel(256);
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel(1024);
         let tid = id.clone();
+        thread::spawn(move || pump_terminal(app, sess, ch, cmd_rx, tid));
 
-        thread::spawn(move || {
-            pump_terminal(app, sess, ch, cmd_rx, tid);
-        });
-
-        self.terminals.lock().unwrap().insert(
-            id.clone(),
-            TermEntry { cmd_tx, _session_id: session_id },
-        );
+        self.terminals.lock().unwrap().insert(id.clone(), TermEntry { cmd_tx, session_id });
         Ok(id)
     }
 
-    pub fn write(&self, id: &str, data: &[u8]) -> PylonResult<()> {
+    fn send(&self, id: &str, cmd: TermCmd) -> PylonResult<()> {
         let lock = self.terminals.lock().unwrap();
-        match lock.get(id) {
-            None => Err(PylonError::Terminal(format!("Terminal {id} not found"))),
-            Some(entry) => entry
-                .cmd_tx
-                .send(TermCmd::Input(data.to_vec()))
-                .map_err(|_| PylonError::Terminal("Terminal closed".into())),
-        }
+        let entry = lock.get(id).ok_or_else(|| PylonError::Terminal("Terminal is closed".into()))?;
+        entry.cmd_tx.send(cmd).map_err(|_| PylonError::Terminal("Terminal is closed".into()))
+    }
+
+    pub fn write(&self, id: &str, data: &[u8]) -> PylonResult<()> {
+        self.send(id, TermCmd::Input(data.to_vec()))
     }
 
     pub fn resize(&self, id: &str, cols: u32, rows: u32) -> PylonResult<()> {
-        let lock = self.terminals.lock().unwrap();
-        match lock.get(id) {
-            None => Err(PylonError::Terminal(format!("Terminal {id} not found"))),
-            Some(entry) => entry
-                .cmd_tx
-                .send(TermCmd::Resize(cols, rows))
-                .map_err(|_| PylonError::Terminal("Terminal closed".into())),
-        }
+        self.send(id, TermCmd::Resize(cols.max(2), rows.max(2)))
     }
 
     pub fn close(&self, id: &str) -> PylonResult<()> {
@@ -143,59 +109,123 @@ impl TerminalRegistry {
         }
         Ok(())
     }
+
+    pub fn close_for_session(&self, session_id: &str) {
+        let mut map = self.terminals.lock().unwrap();
+        let ids: Vec<String> = map.iter().filter(|(_, e)| e.session_id == session_id).map(|(k, _)| k.clone()).collect();
+        for id in ids {
+            if let Some(e) = map.remove(&id) {
+                let _ = e.cmd_tx.send(TermCmd::Close);
+            }
+        }
+    }
+
+    fn forget(&self, id: &str) {
+        self.terminals.lock().unwrap().remove(id);
+    }
 }
 
-fn pump_terminal(
-    app: AppHandle,
-    _sess: Session,
-    mut ch: ssh2::Channel,
-    cmd_rx: Receiver<TermCmd>,
-    tid: String,
-) {
-    let mut buf = vec![0u8; 4096];
-    loop {
+fn write_fully(ch: &mut ssh2::Channel, mut data: &[u8]) -> std::io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !data.is_empty() {
+        match ch.write(data) {
+            Ok(0) => return Err(std::io::Error::new(ErrorKind::WriteZero, "channel closed")),
+            Ok(n) => data = &data[n..],
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() > deadline {
+                    return Err(e);
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let _ = ch.flush();
+    Ok(())
+}
 
-        loop {
-            match cmd_rx.try_recv() {
-                Ok(TermCmd::Input(data)) => { let _ = ch.write_all(&data); }
-                Ok(TermCmd::Resize(c, r)) => { let _ = ch.request_pty_size(c, r, None, None); }
-                Ok(TermCmd::Close) | Err(mpsc::TryRecvError::Disconnected) => {
+fn pump_terminal(app: AppHandle, sess: ssh2::Session, mut ch: ssh2::Channel, cmd_rx: Receiver<TermCmd>, tid: String) {
+    let mut buf = vec![0u8; 32 * 1024];
+    let mut out: Vec<u8> = Vec::with_capacity(64 * 1024);
+    let mut last_keepalive = Instant::now();
+    let mut idle_wait = Duration::from_millis(1);
+    let mut reason = "closed";
+
+    'outer: loop {
+        let first = match cmd_rx.recv_timeout(idle_wait) {
+            Ok(c) => Some(c),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        let mut pending = first.into_iter().chain(std::iter::from_fn(|| cmd_rx.try_recv().ok()));
+        for cmd in &mut pending {
+            match cmd {
+                TermCmd::Input(data) => {
+                    if write_fully(&mut ch, &data).is_err() {
+                        reason = "write failed";
+                        break 'outer;
+                    }
+                }
+                TermCmd::Resize(c, r) => {
+                    let _ = ch.request_pty_size(c, r, None, None);
+                }
+                TermCmd::Close => {
                     let _ = ch.close();
                     return;
                 }
-                Err(mpsc::TryRecvError::Empty) => break,
             }
         }
 
-        match ch.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let _ = app.emit(
-                    "terminal://output",
-                    TerminalOutput { terminal_id: tid.clone(), data: buf[..n].to_vec() },
-                );
-            }
-            Err(e) => {
-
-                let kind = e.kind();
-                if kind == std::io::ErrorKind::WouldBlock || kind == std::io::ErrorKind::TimedOut {
-                    continue;
+        let mut got = false;
+        loop {
+            match ch.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    out.extend_from_slice(&buf[..n]);
+                    got = true;
+                    if out.len() >= 256 * 1024 {
+                        break;
+                    }
                 }
-                break;
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(_) => {
+                    reason = "read failed";
+                    break 'outer;
+                }
             }
         }
-    }
-    let _ = ch.close();
-    let _ = app.emit("terminal://died", serde_json::json!({ "terminal_id": tid }));
-}
+        loop {
+            match ch.stderr().read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    out.extend_from_slice(&buf[..n]);
+                    got = true;
+                }
+                _ => break,
+            }
+        }
+        if !out.is_empty() {
+            let _ = app.emit("terminal://output", TerminalOutput { terminal_id: tid.clone(), data: B64.encode(&out) });
+            out.clear();
+        }
+        idle_wait = if got { Duration::from_millis(1) } else { (idle_wait * 2).min(Duration::from_millis(15)) };
 
-fn tempfile_from_pem(pem: &str) -> PylonResult<std::path::PathBuf> {
-    let path = std::env::temp_dir().join(format!("pylon_term_{}.pem", Uuid::new_v4()));
-    std::fs::write(&path, pem)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        if ch.eof() {
+            break;
+        }
+        if last_keepalive.elapsed() > Duration::from_secs(20) {
+            let _ = sess.keepalive_send();
+            last_keepalive = Instant::now();
+        }
     }
-    Ok(path)
+
+    let exit_status = ch.exit_status().ok();
+    let _ = ch.close();
+    let _ = sess.disconnect(None, "terminal closed", None);
+    if let Some(reg) = tauri::Manager::try_state::<TerminalRegistry>(&app) {
+        reg.forget(&tid);
+    }
+    let _ = app.emit(
+        "terminal://died",
+        serde_json::json!({ "terminal_id": tid, "exit_status": exit_status, "reason": reason }),
+    );
 }

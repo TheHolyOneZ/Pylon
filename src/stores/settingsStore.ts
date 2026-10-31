@@ -3,10 +3,9 @@ import { persist } from "zustand/middleware";
 
 export type ThemeName = "deep-void" | "night" | "soft-void" | "neon" | "amber" | "rose" | "forest";
 export type HostKeyPolicy = "ask" | "auto-accept" | "strict";
-export type DefaultShell = "/bin/bash" | "/bin/zsh" | "/bin/sh" | "/bin/fish";
+export type DefaultShell = "" | "bash" | "zsh" | "fish" | "sh";
 
 export interface AppSettings {
-
   maxConcurrentTransfers: number;
   defaultChunkKb: number;
   bandwidthLimitKbps: number;
@@ -17,6 +16,7 @@ export interface AppSettings {
   termFontSize: number;
   termScrollback: number;
   defaultShell: DefaultShell;
+  terminalFollowsBrowser: boolean;
 
   vaultAutoLockMinutes: number;
   hostKeyPolicy: HostKeyPolicy;
@@ -26,6 +26,7 @@ export interface AppSettings {
 
   defaultLocalPath: string;
   autoReconnect: boolean;
+  confirmDeletes: boolean;
 }
 
 interface SettingsStore extends AppSettings {
@@ -33,31 +34,45 @@ interface SettingsStore extends AppSettings {
   reset: () => void;
 }
 
-const DEFAULTS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   maxConcurrentTransfers: 4,
-  defaultChunkKb: 512,
+  defaultChunkKb: 256,
   bandwidthLimitKbps: 0,
   autoVerifyChecksum: true,
   autoStripMetadata: false,
-  termFontFamily: "JetBrains Mono, Fira Code, monospace",
+  termFontFamily: '"JetBrains Mono", "JetBrainsMono Nerd Font", "Cascadia Code", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
   termFontSize: 13,
   termScrollback: 10000,
-  defaultShell: "/bin/bash",
+  defaultShell: "",
+  terminalFollowsBrowser: true,
   vaultAutoLockMinutes: 30,
   hostKeyPolicy: "ask",
   theme: "deep-void",
-  sidebarWidth: 220,
+  sidebarWidth: 232,
   defaultLocalPath: "",
-  autoReconnect: false,
+  autoReconnect: true,
+  confirmDeletes: true,
 };
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set) => ({
-      ...DEFAULTS,
+      ...DEFAULT_SETTINGS,
       set: (key, value) => set({ [key]: value } as Partial<AppSettings>),
-      reset: () => set(DEFAULTS),
+      reset: () => set(DEFAULT_SETTINGS),
     }),
-    { name: "pylon-settings" }
-  )
+    {
+      name: "pylon-settings",
+      version: 2,
+      migrate: (persisted: any, version) => {
+        const s = { ...DEFAULT_SETTINGS, ...(persisted ?? {}) };
+        if (version < 2) {
+          const old = String(s.defaultShell ?? "");
+          s.defaultShell = old === "/bin/bash" || old === "" ? "" : ((old.split("/").pop() ?? "") as DefaultShell);
+          if (s.defaultChunkKb === 512) s.defaultChunkKb = 256;
+        }
+        return s;
+      },
+    },
+  ),
 );

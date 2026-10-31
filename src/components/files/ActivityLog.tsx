@@ -80,7 +80,6 @@ function LiveTransferRows() {
               )}
             </div>
 
-            {}
             <div className="h-1 bg-void-700 rounded-full overflow-hidden">
               <motion.div
                 className={`h-full rounded-full ${t.state === "running" ? "bg-pylon-cyan" : "bg-pylon-amber"}`}
@@ -115,7 +114,6 @@ export function ActivityLog() {
 
   return (
     <div className="flex flex-col h-full bg-void-900 border-t border-void-600">
-      {}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-void-800 border-b border-void-600 shrink-0">
         <Activity size={12} className="text-pylon-cyan" />
         <span className="text-[10px] font-bold text-pylon-cyan tracking-widest uppercase">Activity Log</span>
@@ -135,9 +133,7 @@ export function ActivityLog() {
         </button>
       </div>
 
-      {}
       <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono">
-        {}
         <LiveTransferRows />
 
         {entries.length === 0 ? (
